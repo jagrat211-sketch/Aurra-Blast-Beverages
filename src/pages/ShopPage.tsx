@@ -166,7 +166,7 @@ export const ShopPage: React.FC = () => {
                 className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white shadow-md hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 transition-all active:scale-95 cursor-pointer"
               >
                 <ShoppingBag className="h-4 w-4 text-lime-400 dark:text-lime-600" />
-                <span>Explore The 8 Flavors</span>
+                <span>Explore Flavors of Aurra</span>
               </a>
 
               <Link
@@ -181,7 +181,7 @@ export const ShopPage: React.FC = () => {
         </div>
       </section>
 
-      {/* Main Content Area: The 8 Flavors Menu */}
+      {/* Main Content Area: Flavors of Aurra Menu */}
       <main id="menu" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-12">
         
         {/* Section Header */}
@@ -189,7 +189,7 @@ export const ShopPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                The 8 Flavors
+                Flavors of Aurra
               </h2>
               <span className="rounded-full bg-lime-500/15 px-2.5 py-0.5 text-xs font-bold text-lime-800 dark:bg-lime-400/20 dark:text-lime-300 border border-lime-400/30">
                 8 Signature Flavors

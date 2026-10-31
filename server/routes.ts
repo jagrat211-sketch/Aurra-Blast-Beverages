@@ -931,4 +931,44 @@ router.post('/admin/sql-query', requireAuth, requireAdmin, (req: Request, res: R
   }
 });
 
+// GET /api/feature-flags (Public query so visitor Navbar knows whether to show Aurra tribute)
+router.get('/feature-flags', (_req: Request, res: Response) => {
+  try {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'aura_tribute_enabled'").get() as { value: string } | undefined;
+    const isEnabled = row ? row.value === '1' || row.value === 'true' : true;
+    return res.json({
+      aura_tribute_enabled: isEnabled,
+    });
+  } catch (err) {
+    return res.json({ aura_tribute_enabled: true });
+  }
+});
+
+// PUT /api/admin/feature-flags (Admin toggle for Enable Aura Tribute)
+router.put('/admin/feature-flags', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { key, enabled } = req.body;
+    if (key !== 'aura_tribute_enabled') {
+      return res.status(400).json({ error: 'Unsupported feature flag key' });
+    }
+
+    const valStr = enabled ? '1' : '0';
+    db.prepare(`
+      INSERT INTO app_settings (key, value, updated_at) 
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(key, valStr);
+
+    return res.json({
+      success: true,
+      flags: {
+        aura_tribute_enabled: Boolean(enabled),
+      },
+      message: `Feature flag '${key}' updated to ${enabled ? 'ENABLED' : 'DISABLED'}`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update feature flag' });
+  }
+});
+
 export default router;

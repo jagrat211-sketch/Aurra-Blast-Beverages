@@ -73,7 +73,23 @@ export function initDatabase() {
       FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+
+  // Initialize default feature flag settings
+  try {
+    const existingFlag = db.prepare("SELECT value FROM app_settings WHERE key = 'aura_tribute_enabled'").get() as { value: string } | undefined;
+    if (!existingFlag) {
+      db.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('aura_tribute_enabled', '1', datetime('now'))").run();
+    }
+  } catch (err) {
+    console.warn('app_settings initialization notice:', err);
+  }
 
   // Migrate columns for users table if existing
   try {

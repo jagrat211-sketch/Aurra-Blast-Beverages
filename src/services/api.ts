@@ -244,4 +244,16 @@ export const api = {
       body: JSON.stringify({ query }),
     });
   },
+
+  // Feature Flags
+  async getFeatureFlags() {
+    return request<{ aura_tribute_enabled: boolean }>('/api/feature-flags');
+  },
+
+  async updateFeatureFlag(key: string, enabled: boolean) {
+    return request<{ success: boolean; flags: { aura_tribute_enabled: boolean }; message: string }>('/api/admin/feature-flags', {
+      method: 'PUT',
+      body: JSON.stringify({ key, enabled }),
+    });
+  },
 };

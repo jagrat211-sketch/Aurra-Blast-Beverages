@@ -14,18 +14,23 @@ import {
   RefreshCw,
   ShoppingBag,
   Clock,
-  Sparkles
+  Sparkles,
+  Sliders,
+  ExternalLink,
+  Globe
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useFeatureFlags } from '../context/FeatureFlagContext';
 import { api } from '../services/api';
 import { Product, CartEventRecord } from '../types';
 import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal';
 
 export const AdminPage: React.FC = () => {
   const { user, loading: authLoading } = useAuth();
+  const { isAuraTributeEnabled, toggleAuraTribute, setAuraTributeEnabled, loading: flagLoading } = useFeatureFlags();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'products' | 'events' | 'users' | 'sql'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'events' | 'users' | 'sql' | 'features'>('products');
   
   // Modal for uploading and associating beverage images
   const [selectedProductForUpload, setSelectedProductForUpload] = useState<Product | null>(null);
@@ -356,6 +361,21 @@ export const AdminPage: React.FC = () => {
         >
           <Database className="h-4 w-4" />
           <span>SQL Query Diagnostics</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('features')}
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+            activeTab === 'features'
+              ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Sliders className="h-4 w-4" />
+          <span>Feature Settings</span>
+          <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.2 text-[9px] font-black text-emerald-700 dark:text-emerald-300">
+            5th Tab
+          </span>
         </button>
       </div>
 
@@ -909,6 +929,144 @@ export const AdminPage: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: Feature Settings (Fifth tab beside SQL Query Diagnostics) */}
+      {activeTab === 'features' && (
+        <div className="mt-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500 text-white shadow-xs">
+                  <Sliders className="h-4 w-4" />
+                </span>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Feature Settings
+                </h2>
+                <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/80 px-2 py-0.5 text-[10px] font-black text-emerald-700 dark:text-emerald-300">
+                  Fifth Tab · Dynamic Flags
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Manage dynamic storefront capabilities and custom navigation modules
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-2xs dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                <span className={`h-2 w-2 rounded-full ${isAuraTributeEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                Aura Tribute: {isAuraTributeEnabled ? 'ONLINE' : 'HIDDEN'}
+              </span>
+            </div>
+          </div>
+
+          {/* Feature Card: Enable Aura Tribute */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+              
+              <div className="space-y-1.5 max-w-2xl">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 shadow-xs">
+                    <Sparkles className="h-4 w-4 fill-amber-400" />
+                  </span>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>Enable Aura Tribute</span>
+                      <span className={`rounded-md px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
+                        isAuraTributeEnabled
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                      }`}>
+                        {isAuraTributeEnabled ? 'Visible to Users' : 'Hidden from Regular Users'}
+                      </span>
+                    </h3>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed pt-1">
+                  When this toggle is turned <strong>ON</strong>, a new menu item called <strong>&ldquo;Aurra&rdquo;</strong> will dynamically appear in the navigation bar right beside the right side of our vision &amp; estate menu. As long as this toggle remains on, the page will keep appearing and be accessible at <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-slate-800 dark:text-amber-400">/aurra</code> whether User/Admin is logged in or not logged in.
+                </p>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Clicking it opens the dedicated tribute page featuring the inspiring story of <strong>Aurra Bhatnagar Badoni</strong> and our 8 signature &ldquo;Aurra&rdquo; beverage flavors (Aurra Berry Blast, Aurra Peach Ice Tea, etc.). When the toggle is <strong>OFF</strong>, this menu and page are completely hidden from regular users.
+                </p>
+              </div>
+
+              {/* Dynamic Toggle Switch */}
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isAuraTributeEnabled}
+                  disabled={flagLoading}
+                  onClick={() => toggleAuraTribute()}
+                  className={`relative inline-flex h-8 w-16 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 ${
+                    isAuraTributeEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform ${
+                      isAuraTributeEnabled ? 'translate-x-9' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+                <span className="text-[11px] font-semibold text-slate-500">
+                  {isAuraTributeEnabled ? 'Toggle is ON' : 'Toggle is OFF'}
+                </span>
+              </div>
+            </div>
+
+            {/* Cloud Sync Note: Required by user specification */}
+            <div className="mt-6 rounded-xl border border-amber-200/80 bg-amber-50/60 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+              <div className="flex items-start gap-3">
+                <Globe className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-amber-900 dark:text-amber-200">
+                    Database Integration &amp; Supabase Synchronizer Note
+                  </p>
+                  <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
+                    <strong>( This Enable Aura Tribute will be synced with Supabase in future)</strong>. The current state is persisted locally and backed by the local SQLite runtime database, ready for direct connection to Supabase cloud RPC synchronization.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Actions Strip */}
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="text-xs text-slate-500">
+                Route path: <span className="font-mono text-slate-700 dark:text-slate-300">/aurra</span> · Title: <span className="font-bold text-slate-700 dark:text-slate-300">AURRA</span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAuraTributeEnabled(true)}
+                  disabled={isAuraTributeEnabled}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Force ON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuraTributeEnabled(false)}
+                  disabled={!isAuraTributeEnabled}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Force OFF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/aurra')}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition-colors"
+                >
+                  <span>Preview Tribute Page</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+          </div>
         </div>
       )}
 

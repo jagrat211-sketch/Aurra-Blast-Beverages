@@ -16,12 +16,14 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useFeatureFlags } from '../context/FeatureFlagContext';
 import { useCartStore } from '../store/useCartStore';
 import { SettingsModal } from './SettingsModal';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { isAuraTributeEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const itemsCount = useCartStore((state) => state.getTotalCount());
   const openCart = useCartStore((state) => state.openCart);
@@ -108,7 +110,7 @@ export const Navbar: React.FC = () => {
               to="/"
               className="hover:text-amber-600 transition-colors dark:hover:text-amber-400 whitespace-nowrap shrink-0"
             >
-              The 8 Flavors
+              Flavors of Aurra
             </Link>
 
             <Link
@@ -117,6 +119,19 @@ export const Navbar: React.FC = () => {
             >
               Our Vision &amp; Estate
             </Link>
+
+            {isAuraTributeEnabled && (
+              <Link
+                to="/aurra"
+                className="group flex items-center gap-1.5 font-extrabold text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-500 fill-amber-400 animate-pulse group-hover:rotate-12 transition-transform" />
+                <span>Aurra</span>
+                <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.2 text-[8.5px] font-black tracking-wider text-amber-800 dark:text-amber-300 ml-0.5">
+                  TRIBUTE
+                </span>
+              </Link>
+            )}
 
             {user?.role === 'admin' && (
               <Link
