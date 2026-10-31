@@ -1,0 +1,6 @@
+{
+  "name": "Aurra Beverages",
+  "description": "Aesthetic artisan sparkling beverage storefront with clean botanical energy sparklers, instant cart checkout, order tracking, and UPI payments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

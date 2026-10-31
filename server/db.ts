@@ -1,0 +1,256 @@
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
+
+// Ensure data directory exists
+const dataDir = path.resolve(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = path.join(dataDir, 'beverage_store.db');
+export const db = new Database(dbPath);
+
+// Enable WAL mode for better concurrency and foreign keys
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+export function initDatabase() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      email_verified INTEGER NOT NULL DEFAULT 0,
+      verification_code TEXT,
+      avatar_url TEXT,
+      parent_id TEXT DEFAULT 'AURRA-DIST-IND-01',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      flavor TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      image_url TEXT NOT NULL,
+      description TEXT NOT NULL,
+      volume TEXT NOT NULL DEFAULT '330ml',
+      calories INTEGER NOT NULL DEFAULT 45,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS cart_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      action TEXT NOT NULL, -- 'add' | 'remove' | 'set_qty'
+      qty INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      total INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS order_items (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      name_snapshot TEXT NOT NULL,
+      price_snapshot INTEGER NOT NULL,
+      qty INTEGER NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+    );
+  `);
+
+  // Migrate columns for users table if existing
+  try {
+    const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+    const colNames = userCols.map((c) => c.name);
+    if (!colNames.includes('avatar_url')) {
+      db.prepare("ALTER TABLE users ADD COLUMN avatar_url TEXT").run();
+    }
+    if (!colNames.includes('parent_id')) {
+      db.prepare("ALTER TABLE users ADD COLUMN parent_id TEXT DEFAULT 'AURRA-DIST-IND-01'").run();
+    }
+  } catch (err) {
+    console.warn('User table migration warning:', err);
+  }
+
+  // Seed default beverage products if none exist
+  const existingCount = db.prepare('SELECT count(*) as count FROM products').get() as { count: number };
+  if (existingCount.count === 0) {
+    seedDefaultProducts();
+  } else {
+    // Ensure all 8 menu drinks have the exact requested Aurra names and are active
+    const syncDrinks = [
+      { id: 'prod-cranberry-sparkle', name: 'Aurra Sparkle Cranberry', flavor: 'Tart Cranberry & Wild Botanicals', price: 149, volume: '330ml', calories: 42 },
+      { id: 'prod-mint-mojito', name: 'Aurra Mint Mojito', flavor: 'Fresh Garden Spearmint & Persian Lime', price: 159, volume: '330ml', calories: 38 },
+      { id: 'prod-zesty-lime', name: 'Aurra Zesty Lime', flavor: 'Crisp Citrus & Himalayan Sea Salt', price: 139, volume: '330ml', calories: 32 },
+      { id: 'prod-mango-rush', name: 'Aurra Mango Rush', flavor: 'Ratnagiri Alphonso & Sunlit Citrus', price: 169, volume: '330ml', calories: 54 },
+      { id: 'prod-orange-fizz', name: 'Aurra Fizz Orange', flavor: 'Nagpur Mandarin & Valencia Orange', price: 149, volume: '330ml', calories: 48 },
+      { id: 'prod-peach-iced-tea', name: 'Aurra Peach Iced Tea', flavor: 'Darjeeling Black Tea & Ripe Golden Peach', price: 159, volume: '355ml', calories: 40 },
+      { id: 'prod-passionfruit-fizz', name: 'Aurra Passionfruit', flavor: 'Tropical Passionfruit & Wild Citrus', price: 169, volume: '330ml', calories: 44 },
+      {
+        id: 'prod-berry-blast',
+        name: 'Aurra Berry Blast',
+        flavor: 'Wild Blackberry, Blueberry & Acai',
+        price: 179,
+        image_url: '/assets/aistudio/aurra_berry_blast.jpg',
+        description: 'A rich anthocyanin-packed blend of deep wild forest berries, dark grape skin, and fizzy spring water.',
+        volume: '330ml',
+        calories: 46,
+      },
+    ];
+
+    const now = new Date().toISOString();
+    for (const item of syncDrinks) {
+      const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(item.id);
+      if (existing) {
+        if (item.image_url) {
+          db.prepare('UPDATE products SET name = ?, flavor = ?, price = ?, image_url = ?, description = ?, volume = ?, calories = ?, active = 1 WHERE id = ?')
+            .run(item.name, item.flavor, item.price, item.image_url, item.description, item.volume, item.calories, item.id);
+        } else {
+          db.prepare('UPDATE products SET name = ?, active = 1 WHERE id = ?').run(item.name, item.id);
+        }
+      } else {
+        db.prepare(`
+          INSERT INTO products (id, name, flavor, price, image_url, description, volume, calories, active, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        `).run(
+          item.id,
+          item.name,
+          item.flavor,
+          item.price,
+          item.image_url || '/assets/aistudio/aurra_berry_blast.jpg',
+          item.description || '',
+          item.volume,
+          item.calories,
+          now
+        );
+      }
+    }
+  }
+}
+
+export function seedDefaultProducts() {
+  const insert = db.prepare(`
+    INSERT INTO products (id, name, flavor, price, image_url, description, volume, calories, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const initialProducts = [
+    {
+      id: 'prod-cranberry-sparkle',
+      name: 'Aurra Sparkle Cranberry',
+      flavor: 'Tart Cranberry & Wild Botanicals',
+      price: 149,
+      image_url: '/src/assets/images/bev_cranberry_sparkle_1793439801856.jpg',
+      description: 'Hand-picked crisp cranberries blended with mountain spring effervescence and floral botanical notes.',
+      volume: '330ml',
+      calories: 42,
+    },
+    {
+      id: 'prod-mint-mojito',
+      name: 'Aurra Mint Mojito',
+      flavor: 'Fresh Garden Spearmint & Persian Lime',
+      price: 159,
+      image_url: '/src/assets/images/bev_mint_mojito_1793439802738.jpg',
+      description: 'Muddled spearmint leaves paired with zesty cold-pressed lime and fine effervescent bubbles.',
+      volume: '330ml',
+      calories: 38,
+    },
+    {
+      id: 'prod-zesty-lime',
+      name: 'Aurra Zesty Lime',
+      flavor: 'Crisp Citrus & Himalayan Sea Salt',
+      price: 139,
+      image_url: '/src/assets/images/bev_zesty_lime_1793439823884.jpg',
+      description: 'Cold-pressed key limes with a subtle pinch of mineral salt for maximum crisp refreshment.',
+      volume: '330ml',
+      calories: 32,
+    },
+    {
+      id: 'prod-mango-rush',
+      name: 'Aurra Mango Rush',
+      flavor: 'Ratnagiri Alphonso & Sunlit Citrus',
+      price: 169,
+      image_url: '/src/assets/images/bev_mango_rush_1793439803204.jpg',
+      description: 'Pure sun-ripened Alphonso mango puree kissed with sparkling carbonation and subtle cardamom finish.',
+      volume: '330ml',
+      calories: 54,
+    },
+    {
+      id: 'prod-orange-fizz',
+      name: 'Aurra Fizz Orange',
+      flavor: 'Nagpur Mandarin & Valencia Orange',
+      price: 149,
+      image_url: '/src/assets/images/bev_orange_fizz_1793439826689.jpg',
+      description: 'Juicy burst of fresh-squeezed sunburst oranges with sparkling micro-bubbles and orange blossom essence.',
+      volume: '330ml',
+      calories: 48,
+    },
+    {
+      id: 'prod-peach-iced-tea',
+      name: 'Aurra Peach Iced Tea',
+      flavor: 'Darjeeling Black Tea & Ripe Golden Peach',
+      price: 159,
+      image_url: '/src/assets/images/bev_peach_iced_tea_1793439826681.jpg',
+      description: 'Single-estate Darjeeling black tea slow-brewed with golden orchard peach slices and organic mint.',
+      volume: '355ml',
+      calories: 40,
+    },
+    {
+      id: 'prod-passionfruit-fizz',
+      name: 'Aurra Passionfruit',
+      flavor: 'Tropical Passionfruit & Wild Citrus',
+      price: 169,
+      image_url: '/src/assets/images/bev_passionfruit_fizz_1793441269499.jpg',
+      description: 'Lush golden passionfruit pulp gently carbonated with floral citrus blossom notes for a tropical burst.',
+      volume: '330ml',
+      calories: 44,
+    },
+    {
+      id: 'prod-berry-blast',
+      name: 'Aurra Berry Blast',
+      flavor: 'Wild Blackberry, Blueberry & Acai',
+      price: 179,
+      image_url: '/assets/aistudio/image_1e6dd58f.png',
+      description: 'A rich anthocyanin-packed blend of deep wild forest berries, dark grape skin, and fizzy spring water.',
+      volume: '330ml',
+      calories: 46,
+    },
+  ];
+
+  const now = new Date().toISOString();
+  const insertMany = db.transaction((products) => {
+    for (const prod of products) {
+      insert.run(
+        prod.id,
+        prod.name,
+        prod.flavor,
+        prod.price,
+        prod.image_url,
+        prod.description,
+        prod.volume,
+        prod.calories,
+        1,
+        now
+      );
+    }
+  });
+
+  insertMany(initialProducts);
+}
