@@ -12,8 +12,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const { adminLogin } = useAuth();
   const navigate = useNavigate();
 
-  const [username, setUsername] = useState('Admin@G.com');
-  const [password, setPassword] = useState('Admin');
+  const [username, setUsername] = useState('adminaurra@beverages.com');
+  const [password, setPassword] = useState('admin');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +29,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       onClose();
       navigate('/admin');
     } catch (err: any) {
-      setError(err.message || 'Invalid admin credentials. Use Admin@G.com / Admin.');
+      setError(err.message || 'Invalid admin credentials. Use adminaurra@beverages.com / admin.');
     } finally {
       setLoading(false);
     }
@@ -59,14 +59,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
           </p>
         </div>
 
-        {/* Prototype Architecture Banner */}
+        {/* Credentials Banner */}
         <div className="my-4 rounded-2xl bg-amber-50/80 p-3.5 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
           <div className="flex items-center gap-1.5 font-bold mb-1">
             <Database className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-            <span>Prototype Admin Credentials</span>
+            <span>Admin Credentials</span>
           </div>
           <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
-            Email: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">Admin@G.com</strong> (or <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">admin</strong>) &amp; password: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">Admin</strong>. Architecture is prepared for dynamic database integration.
+            Email: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">adminaurra@beverages.com</strong> &amp; password: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">admin</strong>.
           </p>
         </div>
 

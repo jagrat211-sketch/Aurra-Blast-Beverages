@@ -105,6 +105,44 @@ export function initDatabase() {
     console.warn('User table migration warning:', err);
   }
 
+  // Migrate columns for products table (Inventory & Stock Management)
+  try {
+    const prodCols = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+    const pColNames = prodCols.map((c) => c.name);
+
+    if (!pColNames.includes('total_quantity')) {
+      db.prepare("ALTER TABLE products ADD COLUMN total_quantity INTEGER DEFAULT 50").run();
+    }
+    if (!pColNames.includes('remaining_quantity')) {
+      db.prepare("ALTER TABLE products ADD COLUMN remaining_quantity INTEGER DEFAULT 50").run();
+    }
+    if (!pColNames.includes('category')) {
+      db.prepare("ALTER TABLE products ADD COLUMN category TEXT DEFAULT 'Botanical Sparkler'").run();
+    }
+    if (!pColNames.includes('beverage_name')) {
+      db.prepare("ALTER TABLE products ADD COLUMN beverage_name TEXT").run();
+      db.prepare("UPDATE products SET beverage_name = name WHERE beverage_name IS NULL").run();
+    }
+    if (!pColNames.includes('flavor_notes')) {
+      db.prepare("ALTER TABLE products ADD COLUMN flavor_notes TEXT").run();
+      db.prepare("UPDATE products SET flavor_notes = flavor WHERE flavor_notes IS NULL").run();
+    }
+
+    // Initialize stock for any products with null/zero values
+    db.prepare(`
+      UPDATE products
+      SET total_quantity = 50
+      WHERE total_quantity IS NULL OR total_quantity = 0
+    `).run();
+    db.prepare(`
+      UPDATE products
+      SET remaining_quantity = total_quantity
+      WHERE remaining_quantity IS NULL
+    `).run();
+  } catch (err) {
+    console.warn('Product table inventory migration warning:', err);
+  }
+
   // Seed default beverage products if none exist
   const existingCount = db.prepare('SELECT count(*) as count FROM products').get() as { count: number };
   if (existingCount.count === 0) {

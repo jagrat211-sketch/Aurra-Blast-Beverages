@@ -17,8 +17,8 @@ export const AuthPage: React.FC = () => {
 
   // Admin Login state
   const [isAdminMode, setIsAdminMode] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('Admin@G.com');
-  const [adminPassword, setAdminPassword] = useState('Admin');
+  const [adminEmail, setAdminEmail] = useState('adminaurra@beverages.com');
+  const [adminPassword, setAdminPassword] = useState('admin');
 
   // Sign up form state
   const [signupName, setSignupName] = useState('');
@@ -76,7 +76,7 @@ export const AuthPage: React.FC = () => {
         navigate('/admin');
       }
     } catch (err: any) {
-      setLoginError(err.message || 'Invalid admin credentials. Use Admin@G.com / Admin');
+      setLoginError(err.message || 'Invalid admin credentials. Use adminaurra@beverages.com / admin');
     } finally {
       setLoginLoading(false);
     }
@@ -96,7 +96,9 @@ export const AuthPage: React.FC = () => {
 
     try {
       const res = await signup(signupName, signupEmail, signupPassword);
-      if (res.requiresVerification) {
+      if (res.user) {
+        navigate('/');
+      } else if (res.requiresVerification && res.email) {
         setVerifyingEmail(res.email);
         setDevCodePreview(res.devVerificationCode || null);
       }
@@ -326,7 +328,7 @@ export const AuthPage: React.FC = () => {
                       Sign in as Administrator
                     </span>
                     <p className="text-[11px] text-purple-700/80 dark:text-purple-400 mt-1">
-                      Prototype credentials: <span className="font-mono font-bold">Admin@G.com</span> / <span className="font-mono font-bold">Admin</span>
+                      Credentials: <span className="font-mono font-bold">adminaurra@beverages.com</span> / <span className="font-mono font-bold">admin</span>
                     </p>
                   </div>
 
@@ -347,7 +349,7 @@ export const AuthPage: React.FC = () => {
                         type="text"
                         value={adminEmail}
                         onChange={(e) => setAdminEmail(e.target.value)}
-                        placeholder="Admin@G.com"
+                        placeholder="adminaurra@beverages.com"
                         className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         required
                       />
@@ -524,9 +526,9 @@ export const AuthPage: React.FC = () => {
 
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-800/40">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">
-                    Administrator privilege rule:
+                    Account privilege:
                   </span>{' '}
-                  The first user to register automatically becomes the Store Admin with access to beverage uploads and analytics!
+                  New user registrations are assigned customer club member role by default.
                 </div>
 
                 <button

@@ -7,7 +7,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; user?: User; requiresVerification?: boolean; email?: string; devVerificationCode?: string }>;
-  signup: (name: string, email: string, password: string) => Promise<{ success?: boolean; requiresVerification: boolean; email: string; message: string; devVerificationCode?: string }>;
+  signup: (name: string, email: string, password: string) => Promise<{ success?: boolean; user?: User; requiresVerification?: boolean; email?: string; message: string; devVerificationCode?: string }>;
   verifyEmail: (email: string, code: string) => Promise<{ success: boolean; user: User }>;
   resendCode: (email: string) => Promise<{ success: boolean; devVerificationCode?: string }>;
   logout: () => Promise<void>;
@@ -52,7 +52,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signup = async (name: string, email: string, password: string) => {
-    return await api.signup({ name, email, password });
+    const res = await api.signup({ name, email, password });
+    if (res.user) {
+      setUser(res.user);
+      setCartUser(res.user);
+    }
+    return res;
   };
 
   const verifyEmail = async (email: string, code: string) => {

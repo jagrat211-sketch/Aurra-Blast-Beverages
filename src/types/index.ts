@@ -12,12 +12,17 @@ export interface User {
 export interface Product {
   id: string;
   name: string;
+  beverage_name?: string;
   flavor: string;
+  flavor_notes?: string;
   price: number;
   image_url: string;
   description: string;
   volume: string;
   calories: number;
+  category?: string;
+  total_quantity: number;
+  remaining_quantity: number;
   active: number;
   created_at: string;
 }

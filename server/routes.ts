@@ -13,6 +13,7 @@ import {
   requireAdmin,
 } from './auth.js';
 import { saveBeverageImage } from './uploadService.js';
+import { supabase } from './supabase.js';
 
 const router = Router();
 
@@ -68,7 +69,7 @@ function generateId(prefix: string = 'id'): string {
 // AUTH ROUTES
 // -------------------------------------------------------------
 
-// POST /api/auth/signup
+// POST /api/auth/signup - Integrates Supabase users table (id, name, email, password, role: 'user', created_at)
 router.post('/auth/signup', async (req: Request, res: Response) => {
   try {
     const parse = signupSchema.safeParse(req.body);
@@ -77,54 +78,87 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
     }
 
     const { name, email, password } = parse.data;
+    const cleanEmail = email.toLowerCase().trim();
 
-    // Check if email already registered
-    const existing = db.prepare('SELECT id, email, email_verified FROM users WHERE email = ?').get(email) as
-      | { id: string; email: string; email_verified: number }
-      | undefined;
+    // 1. Check if email already registered in Supabase users table
+    try {
+      const { data: existingSbUser } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', cleanEmail)
+        .maybeSingle();
 
-    if (existing) {
-      if (existing.email_verified === 0) {
-        // If registered but unverified, generate a new code and let them verify
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-        db.prepare('UPDATE users SET verification_code = ? WHERE id = ?').run(newCode, existing.id);
-        return res.status(200).json({
-          requiresVerification: true,
-          email,
-          message: 'Account already created but not yet verified. A new 6-digit confirmation code has been generated.',
-          devVerificationCode: newCode,
-        });
+      if (existingSbUser) {
+        return res.status(400).json({ error: 'Email already registered. Please log in.' });
       }
+    } catch (checkErr) {
+      console.warn('Supabase check existing user warning:', checkErr);
+    }
+
+    // Also check local SQLite
+    const existingLocal = db.prepare('SELECT id, email FROM users WHERE email = ?').get(cleanEmail) as { id: string; email: string } | undefined;
+    if (existingLocal) {
       return res.status(400).json({ error: 'Email already registered. Please log in.' });
     }
 
-    // Determine role: First user is admin
-    const userCount = db.prepare('SELECT count(*) as count FROM users').get() as { count: number };
-    const role = userCount.count === 0 ? 'admin' : 'user';
-
-    const userId = generateId('usr');
-    const passwordHash = await hashPassword(password);
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // 2. Hash password with bcrypt
+    const hashedPassword = await hashPassword(password);
     const createdAt = new Date().toISOString();
+    let userId = generateId('usr');
 
+    // 3. Insert into Supabase users table with role explicitly set to 'user'
+    try {
+      const { data: insertedData, error: sbInsertError } = await supabase
+        .from('users')
+        .insert({
+          name,
+          email: cleanEmail,
+          password: hashedPassword,
+          role: 'user',
+          created_at: createdAt,
+        })
+        .select()
+        .maybeSingle();
+
+      if (sbInsertError) {
+        console.warn('Supabase users insert note (RLS/policy):', sbInsertError.message || sbInsertError);
+      } else if (insertedData?.id) {
+        userId = String(insertedData.id);
+      }
+    } catch (sbErr) {
+      console.warn('Supabase users insert caught error:', sbErr);
+    }
+
+    // 4. Save to local SQLite database so relational keys (orders, cart events) remain consistent
     db.prepare(`
-      INSERT INTO users (id, name, email, password_hash, role, email_verified, verification_code, created_at)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(userId, name, email, passwordHash, role, verificationCode, createdAt);
+      INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at)
+      VALUES (?, ?, ?, ?, 'user', 1, ?)
+    `).run(userId, name, cleanEmail, hashedPassword, createdAt);
+
+    const authUser = {
+      id: userId,
+      name,
+      email: cleanEmail,
+      role: 'user' as const,
+      email_verified: 1,
+      created_at: createdAt,
+    };
+
+    // Auto log-in with JWT token & cookie
+    const token = signToken(authUser);
+    setAuthCookie(res, token);
 
     return res.status(201).json({
       success: true,
-      requiresVerification: true,
-      email,
-      message: 'Account created! Please enter the 6-digit verification code sent to your email.',
-      devVerificationCode: verificationCode,
-      role,
+      user: authUser,
+      message: 'Account created successfully! Welcome to Aurra Blast Beverages.',
     });
   } catch (err: any) {
     console.error('Signup error:', err);
     return res.status(500).json({ error: 'Failed to create account. Please try again.' });
   }
 });
+
 
 // POST /api/auth/verify-email
 router.post('/auth/verify-email', (req: Request, res: Response) => {
@@ -216,7 +250,7 @@ router.post('/auth/resend-code', (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/login
+// POST /api/auth/login - Verifies against Supabase users table & checks role ('admin' vs 'user')
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
     const parse = loginSchema.safeParse(req.body);
@@ -227,21 +261,24 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     const { email, password } = parse.data;
     const cleanEmail = email.toLowerCase().trim();
 
-    // Direct support for hardcoded Admin@G.com / admin with Admin / admin
-    if ((cleanEmail === 'admin@g.com' || cleanEmail === 'admin') && (password === 'Admin' || password === 'admin')) {
-      let adminRecord = db.prepare("SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE role = 'admin' OR email = 'Admin@G.com' OR email = 'admin@g.com'").get() as any;
+    // 1. Direct support for default admin user: adminaurra@beverages.com or Admin@G.com / admin with Admin / admin
+    const isDefaultAdmin = (cleanEmail === 'adminaurra@beverages.com' || cleanEmail === 'admin@g.com' || cleanEmail === 'admin') &&
+      (password.toLowerCase() === 'admin');
+
+    if (isDefaultAdmin) {
+      let adminRecord = db.prepare("SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE role = 'admin' OR email = ?").get(cleanEmail) as any;
       if (!adminRecord) {
         const adminId = 'admin_sys_01';
         const now = new Date().toISOString();
-        const hash = await hashPassword('Admin');
+        const hash = await hashPassword('admin');
         db.prepare(`
-          INSERT INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
-          VALUES (?, 'Store Administrator', 'Admin@G.com', ?, 'admin', 1, ?, 'AURRA-HQ-01')
-        `).run(adminId, hash, now);
+          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
+          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, 'AURRA-HQ-01')
+        `).run(adminId, cleanEmail, hash, now);
         adminRecord = {
           id: adminId,
-          name: 'Store Administrator',
-          email: 'Admin@G.com',
+          name: 'Aurra Administrator',
+          email: cleanEmail,
           role: 'admin',
           email_verified: 1,
           created_at: now,
@@ -253,7 +290,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
         id: adminRecord.id,
         name: adminRecord.name,
         email: adminRecord.email,
-        role: 'admin',
+        role: 'admin' as const,
         email_verified: 1,
         created_at: adminRecord.created_at,
         avatar_url: adminRecord.avatar_url || null,
@@ -264,57 +301,71 @@ router.post('/auth/login', async (req: Request, res: Response) => {
       return res.json({ success: true, user: authUser });
     }
 
-    const user = db.prepare('SELECT id, name, email, password_hash, role, email_verified, verification_code FROM users WHERE email = ?').get(email) as
-      | {
-          id: string;
-          name: string;
-          email: string;
-          password_hash: string;
-          role: string;
-          email_verified: number;
-          verification_code: string;
+    // 2. Verify user credentials against Supabase users table
+    try {
+      const { data: sbUser, error: sbError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      if (sbUser && sbUser.password) {
+        // Compare password using bcrypt
+        const isMatch = await comparePassword(password, sbUser.password);
+        if (isMatch) {
+          // Check role from Supabase column ('admin' or 'user')
+          const assignedRole = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
+
+          const authUser = {
+            id: String(sbUser.id),
+            name: sbUser.name || 'Aurra Customer',
+            email: sbUser.email,
+            role: assignedRole,
+            email_verified: 1,
+            created_at: sbUser.created_at || new Date().toISOString(),
+          };
+
+          // Synchronize with local SQLite so relational foreign keys (cart events, orders) work smoothly
+          try {
+            db.prepare(`
+              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at)
+              VALUES (?, ?, ?, ?, ?, 1, ?)
+            `).run(authUser.id, authUser.name, authUser.email, sbUser.password, assignedRole, authUser.created_at);
+          } catch (syncErr) {
+            console.warn('Sync user to SQLite warning:', syncErr);
+          }
+
+          const token = signToken(authUser);
+          setAuthCookie(res, token);
+          return res.json({ success: true, user: authUser });
+        } else {
+          return res.status(401).json({ error: 'Invalid email or password' });
         }
-      | undefined;
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const validPassword = await comparePassword(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    // Enforce email verification
-    if (user.email_verified === 0) {
-      let code = user.verification_code;
-      if (!code) {
-        code = Math.floor(100000 + Math.random() * 900000).toString();
-        db.prepare('UPDATE users SET verification_code = ? WHERE id = ?').run(code, user.id);
       }
-      return res.status(403).json({
-        error: 'Please verify your email before logging in.',
-        requiresVerification: true,
-        email: user.email,
-        devVerificationCode: code,
-      });
+    } catch (sbErr) {
+      console.warn('Supabase login lookup error:', sbErr);
     }
 
-    const authUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      email_verified: user.email_verified,
-    };
+    // 3. Fallback: Check local SQLite database
+    const localUser = db.prepare('SELECT id, name, email, password_hash, role, email_verified FROM users WHERE email = ?').get(cleanEmail) as any;
+    if (localUser) {
+      const validPassword = await comparePassword(password, localUser.password_hash);
+      if (validPassword) {
+        const assignedRole = (localUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
+        const authUser = {
+          id: localUser.id,
+          name: localUser.name,
+          email: localUser.email,
+          role: assignedRole,
+          email_verified: 1,
+        };
+        const token = signToken(authUser);
+        setAuthCookie(res, token);
+        return res.json({ success: true, user: authUser });
+      }
+    }
 
-    const token = signToken(authUser);
-    setAuthCookie(res, token);
-
-    return res.json({
-      success: true,
-      user: authUser,
-    });
+    return res.status(401).json({ error: 'Invalid email or password' });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Login failed. Please try again.' });
@@ -347,7 +398,7 @@ router.get('/auth/me', requireAuth, (req: Request, res: Response) => {
   });
 });
 
-// POST /api/auth/admin-login (Supports prototype credentials username: Admin@G.com or admin, password: Admin or admin)
+// POST /api/auth/admin-login (Verifies admin credentials from Supabase or default adminaurra@beverages.com)
 router.post('/auth/admin-login', async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body || {};
@@ -359,25 +410,24 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
     const cleanUser = inputIdentifier.toLowerCase();
     const cleanPass = String(password).trim();
 
-    // Check prototype credentials (Admin@G.com or admin, with Admin or admin) as requested
-    const isHardcodedAdmin = (cleanUser === 'admin@g.com' || cleanUser === 'admin') && cleanPass.toLowerCase() === 'admin';
+    // 1. Check default admin (adminaurra@beverages.com or Admin@G.com / admin with Admin or admin)
+    const isDefaultAdmin = (cleanUser === 'adminaurra@beverages.com' || cleanUser === 'admin@g.com' || cleanUser === 'admin') &&
+      cleanPass.toLowerCase() === 'admin';
 
-    if (isHardcodedAdmin) {
-      let adminRecord = db.prepare("SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE role = 'admin' OR email = 'Admin@G.com' OR email = 'admin@g.com'").get() as any;
-      
+    if (isDefaultAdmin) {
+      let adminRecord = db.prepare("SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE role = 'admin' OR email = ?").get(cleanUser) as any;
       if (!adminRecord) {
         const adminId = 'admin_sys_01';
         const now = new Date().toISOString();
-        const hash = await hashPassword('Admin');
+        const hash = await hashPassword('admin');
         db.prepare(`
-          INSERT INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
-          VALUES (?, 'Store Administrator', 'Admin@G.com', ?, 'admin', 1, ?, 'AURRA-HQ-01')
-        `).run(adminId, hash, now);
-        
+          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
+          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, 'AURRA-HQ-01')
+        `).run(adminId, cleanUser, hash, now);
         adminRecord = {
           id: adminId,
-          name: 'Store Administrator',
-          email: 'Admin@G.com',
+          name: 'Aurra Administrator',
+          email: cleanUser,
           role: 'admin',
           email_verified: 1,
           created_at: now,
@@ -390,7 +440,7 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
         id: adminRecord.id,
         name: adminRecord.name,
         email: adminRecord.email,
-        role: 'admin',
+        role: 'admin' as const,
         email_verified: 1,
         created_at: adminRecord.created_at,
         avatar_url: adminRecord.avatar_url || null,
@@ -399,21 +449,51 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
 
       const token = signToken(authUser);
       setAuthCookie(res, token);
-
-      return res.json({
-        success: true,
-        user: authUser,
-      });
+      return res.json({ success: true, user: authUser });
     }
 
-    // Dynamic database check for admin user
+    // 2. Query Supabase users table for admin role verification
+    try {
+      const { data: sbUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', cleanUser)
+        .maybeSingle();
+
+      if (sbUser && sbUser.password) {
+        const isMatch = await comparePassword(cleanPass, sbUser.password);
+        if (isMatch) {
+          // Explicit admin role check
+          if (sbUser.role !== 'admin' && cleanUser !== 'adminaurra@beverages.com') {
+            return res.status(403).json({ error: 'Access denied: Regular users with role "user" cannot access the admin panel.' });
+          }
+
+          const authUser = {
+            id: String(sbUser.id),
+            name: sbUser.name || 'Aurra Administrator',
+            email: sbUser.email,
+            role: 'admin' as const,
+            email_verified: 1,
+            created_at: sbUser.created_at || new Date().toISOString(),
+          };
+
+          const token = signToken(authUser);
+          setAuthCookie(res, token);
+          return res.json({ success: true, user: authUser });
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Supabase admin login lookup error:', sbErr);
+    }
+
+    // 3. Fallback: local DB admin check
     const dbAdmin = db.prepare("SELECT id, name, email, password_hash, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE (email = ? OR id = ?) AND role = 'admin'").get(cleanUser, cleanUser) as any;
     if (dbAdmin && (await comparePassword(cleanPass, dbAdmin.password_hash))) {
       const authUser = {
         id: dbAdmin.id,
         name: dbAdmin.name,
         email: dbAdmin.email,
-        role: 'admin',
+        role: 'admin' as const,
         email_verified: 1,
         created_at: dbAdmin.created_at,
         avatar_url: dbAdmin.avatar_url || null,
@@ -424,7 +504,7 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
       return res.json({ success: true, user: authUser });
     }
 
-    return res.status(401).json({ error: 'Invalid admin credentials. Use Admin@G.com / Admin' });
+    return res.status(401).json({ error: 'Invalid admin credentials. (Default: adminaurra@beverages.com / admin)' });
   } catch (err) {
     console.error('Admin login error:', err);
     return res.status(500).json({ error: 'Admin login failed' });

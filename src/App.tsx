@@ -24,6 +24,25 @@ const AurraRouteGuard: React.FC = () => {
   return <AurraTributePage />;
 };
 
+// Route guard for /admin: Strictly restricted to users with role === 'admin'
+const AdminRouteGuard: React.FC = () => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!user || user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <AdminPage />;
+};
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -56,7 +75,7 @@ export default function App() {
 
                   {/* Optional /auth direct route and Admin panel */}
                   <Route path="/auth" element={<AuthPage />} />
-                  <Route path="/admin" element={<AdminPage />} />
+                  <Route path="/admin" element={<AdminRouteGuard />} />
                   
                   {/* Fallback & aliases */}
                   <Route path="/shop" element={<Navigate to="/" replace />} />

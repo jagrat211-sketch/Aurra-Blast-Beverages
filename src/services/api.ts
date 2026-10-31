@@ -49,8 +49,9 @@ export const api = {
   async signup(payload: { name: string; email: string; password: string }) {
     return request<{
       success?: boolean;
-      requiresVerification: boolean;
-      email: string;
+      user?: User;
+      requiresVerification?: boolean;
+      email?: string;
       message: string;
       devVerificationCode?: string;
     }>('/api/auth/signup', {
