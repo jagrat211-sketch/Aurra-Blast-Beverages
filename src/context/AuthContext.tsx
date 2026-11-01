@@ -17,7 +17,7 @@ interface AuthContextType {
   updateContactNo: (contactNo: string) => Promise<{ success: boolean; user: User; message: string }>;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; user: User }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
-  updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; user: User }>;
+  updateAvatar: (avatarUrl: string, file?: File, remove?: boolean) => Promise<{ success: boolean; user: User; url?: string | null }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -144,11 +144,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return await api.changePassword({ currentPassword, newPassword });
   };
 
-  const updateAvatar = async (avatarUrl: string) => {
-    const res = await api.updateAvatar({ avatarUrl });
+  const updateAvatar = async (avatarUrl: string, file?: File, remove?: boolean) => {
+    const res = await api.updateAvatar({ avatarUrl, file, remove });
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      localStorage.setItem('aurra_auth_user', JSON.stringify(res.user));
     }
     return res;
   };

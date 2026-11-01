@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShieldCheck,
@@ -18,13 +18,16 @@ import {
   Sliders,
   ExternalLink,
   Globe,
-  Trash2
+  Trash2,
+  Crop,
+  X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useFeatureFlags } from '../context/FeatureFlagContext';
 import { api } from '../services/api';
 import { Product, CartEventRecord } from '../types';
 import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal';
+import { ImageCropModal } from '../components/ImageCropModal';
 
 export const BEVERAGE_CATEGORIES = [
   'Botanical Sparkler',
@@ -71,6 +74,8 @@ export const AdminPage: React.FC = () => {
     active: 1,
   });
   const [imagePreview, setImagePreview] = useState<string>('');
+  const [isFormCropModalOpen, setIsFormCropModalOpen] = useState(false);
+  const productFileInputRef = useRef<HTMLInputElement>(null);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productSuccess, setProductSuccess] = useState<string | null>(null);
 
@@ -218,8 +223,24 @@ export const AdminPage: React.FC = () => {
     setProductSuccess(null);
 
     try {
+      let finalImageUrl = productForm.image_url;
+      if (finalImageUrl.startsWith('data:image/')) {
+        try {
+          const uploadRes = await api.uploadBeverageImage({
+            imageBase64: finalImageUrl,
+            filename: `${productForm.name || 'product'}.jpg`,
+          });
+          if (uploadRes?.url) {
+            finalImageUrl = uploadRes.url;
+          }
+        } catch (uploadErr) {
+          console.warn('Could not upload product image to Cloudinary:', uploadErr);
+        }
+      }
+
       await api.saveProduct({
         ...productForm,
+        image_url: finalImageUrl,
         price: Number(productForm.price),
         calories: Number(productForm.calories),
         total_quantity: Number(productForm.total_quantity),
@@ -675,7 +696,7 @@ export const AdminPage: React.FC = () => {
                 </label>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <div className="h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800 flex items-center justify-center">
+                  <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800 flex items-center justify-center">
                     {imagePreview || productForm.image_url ? (
                       <img
                         src={imagePreview || productForm.image_url}
@@ -689,14 +710,42 @@ export const AdminPage: React.FC = () => {
 
                   <div className="flex-1 space-y-2 w-full">
                     <input
+                      ref={productFileInputRef}
                       type="file"
                       accept="image/*"
                       onChange={handleImageFileChange}
                       required={!productForm.image_url}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:py-2 file:px-4 file:text-xs file:font-semibold file:text-white hover:file:bg-amber-600 cursor-pointer"
                     />
+
+                    {(imagePreview || productForm.image_url) && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsFormCropModalOpen(true)}
+                          className="flex items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/40 hover:bg-amber-500/25 transition-colors cursor-pointer"
+                        >
+                          <Crop className="h-3.5 w-3.5" />
+                          <span>Crop Photo</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImagePreview('');
+                            setProductForm((prev) => ({ ...prev, image_url: '' }));
+                            if (productFileInputRef.current) productFileInputRef.current.value = '';
+                          }}
+                          className="flex items-center gap-1 rounded-lg bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/50 transition-colors cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          <span>Clear / Cancel</span>
+                        </button>
+                      </div>
+                    )}
+
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Upload your can, bottle, or beverage photo (PNG, JPG, WebP).
+                      Upload your can, bottle, or beverage photo. Stored securely in Cloudinary folder <code>Aurra products</code> and synced to Supabase <code>products.image_url</code>.
                     </p>
                   </div>
                 </div>
@@ -1311,6 +1360,19 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
+      {/* Beverage Form Image Cropper */}
+      <ImageCropModal
+        isOpen={isFormCropModalOpen}
+        imageSrc={imagePreview || productForm.image_url}
+        aspectRatio={4 / 3}
+        circularCrop={false}
+        onClose={() => setIsFormCropModalOpen(false)}
+        onCropComplete={(cropped) => {
+          setImagePreview(cropped);
+          setProductForm((prev) => ({ ...prev, image_url: cropped }));
+          setIsFormCropModalOpen(false);
+        }}
+      />
     </div>
   );
 };

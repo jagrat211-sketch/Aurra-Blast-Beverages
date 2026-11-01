@@ -179,9 +179,9 @@ export const Navbar: React.FC = () => {
                   className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/90 py-1.5 px-2.5 sm:px-3 text-left transition-all hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800/90 dark:hover:bg-slate-700/80 cursor-pointer shadow-xs"
                 >
                   {/* User Avatar */}
-                  {user.avatar_url ? (
+                  {user.user_profile || user.avatar_url ? (
                     <img
-                      src={user.avatar_url}
+                      src={user.user_profile || user.avatar_url}
                       alt={user.name}
                       className="h-7 w-7 rounded-lg object-cover border border-emerald-400 shadow-xs"
                     />

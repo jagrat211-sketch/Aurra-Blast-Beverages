@@ -13,7 +13,12 @@ import {
   requireAdmin,
   optionalAuth,
 } from './auth.js';
-import { saveBeverageImage } from './uploadService.js';
+import {
+  saveBeverageImage,
+  uploadToCloudinarySigned,
+  getSignedUploadParams,
+  CLOUDINARY_DEFAULTS,
+} from './uploadService.js';
 import { supabase } from './supabase.js';
 
 const router = Router();
@@ -408,23 +413,38 @@ router.post('/auth/logout', (_req: Request, res: Response) => {
 });
 
 // GET /api/auth/me
-router.get('/auth/me', requireAuth, (req: Request, res: Response) => {
-  const user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id) as any;
-  if (!user) {
-    return res.json({ user: req.user });
+router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
+  let user: any = null;
+  try {
+    user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+  } catch {
+    user = null;
   }
+
+  // Also query latest user_profile from Supabase
+  let sbProfile: string | null = null;
+  try {
+    const { data: sbUser } = await supabase.from('users').select('user_profile, avatar_url').eq('email', req.user!.email).maybeSingle();
+    if (sbUser?.user_profile || sbUser?.avatar_url) {
+      sbProfile = sbUser.user_profile || sbUser.avatar_url;
+    }
+  } catch {}
+
+  const finalProfile = sbProfile || user?.user_profile || user?.avatar_url || req.user!.avatar_url || null;
+
   return res.json({
     user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      email_verified: user.email_verified,
-      created_at: user.created_at,
-      updated_at: user.updated_at || null,
-      avatar_url: user.avatar_url || null,
-      delivery_address: user.delivery_address || null,
-      parent_id: user.parent_id || 'AURRA-DIST-IND-01',
+      id: user?.id || req.user!.id,
+      name: user?.name || req.user!.name,
+      email: user?.email || req.user!.email,
+      role: user?.role || req.user!.role,
+      email_verified: 1,
+      created_at: user?.created_at || req.user!.created_at,
+      updated_at: user?.updated_at || null,
+      avatar_url: finalProfile,
+      user_profile: finalProfile,
+      delivery_address: user?.delivery_address || req.user!.delivery_address || null,
+      parent_id: user?.parent_id || req.user!.parent_id || 'AURRA-DIST-IND-01',
     },
   });
 });
@@ -446,6 +466,23 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
       cleanPass.toLowerCase() === 'admin';
 
     if (isDefaultAdmin) {
+      let existingProfile: string | undefined = undefined;
+      try {
+        const { data: sbAdmin } = await supabase.from('users').select('user_profile, avatar_url').eq('email', 'adminaurra@beverages.com').maybeSingle();
+        if (sbAdmin?.user_profile || sbAdmin?.avatar_url) {
+          existingProfile = sbAdmin.user_profile || sbAdmin.avatar_url;
+        }
+      } catch {}
+
+      if (!existingProfile) {
+        try {
+          const localAdmin = db.prepare('SELECT avatar_url, user_profile FROM users WHERE email = ?').get('adminaurra@beverages.com') as any;
+          if (localAdmin?.user_profile || localAdmin?.avatar_url) {
+            existingProfile = localAdmin.user_profile || localAdmin.avatar_url;
+          }
+        } catch {}
+      }
+
       const authUser = {
         id: 'admin_sys_01',
         name: 'Aurra Administrator',
@@ -453,22 +490,23 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
         role: 'admin' as const,
         email_verified: 1,
         created_at: new Date().toISOString(),
-        avatar_url: undefined,
+        avatar_url: existingProfile,
+        user_profile: existingProfile,
         parent_id: 'AURRA-HQ-01',
       };
 
       try {
         db.prepare(`
-          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
-          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, 'AURRA-HQ-01')
-        `).run(authUser.id, authUser.email, await hashPassword('admin'), authUser.created_at);
-      } catch {
-        // ignore on serverless
+          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, avatar_url, user_profile, parent_id)
+          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, ?, ?, 'AURRA-HQ-01')
+        `).run(authUser.id, authUser.email, await hashPassword('admin'), authUser.created_at, existingProfile || null, existingProfile || null);
+      } catch (err) {
+        console.warn('Admin SQLite insert warning:', err);
       }
 
       const token = signToken(authUser);
       setAuthCookie(res, token);
-      return res.json({ success: true, user: authUser });
+      return res.json({ success: true, token, user: authUser });
     }
 
     // 2. Query Supabase users table for admin role verification
@@ -615,33 +653,142 @@ router.put('/auth/change-password', requireAuth, async (req: Request, res: Respo
   }
 });
 
-// POST /api/auth/avatar
+// POST /api/cloudinary/sign (Generates authenticated signature using API Secret for signed client uploads)
+router.post('/cloudinary/sign', requireAuth, (req: Request, res: Response) => {
+  try {
+    const { folder } = req.body || {};
+    const targetFolder: 'Aurra profile' | 'Aurra products' =
+      folder === 'Aurra products' ? 'Aurra products' : 'Aurra profile';
+
+    // Strict security: Only admin can sign uploads to "Aurra products"
+    if (targetFolder === 'Aurra products' && req.user!.role !== 'admin') {
+      return res.status(403).json({ error: 'Only administrators can upload product images' });
+    }
+
+    const signedParams = getSignedUploadParams(targetFolder);
+    return res.json({
+      success: true,
+      ...signedParams,
+    });
+  } catch (err: any) {
+    console.error('Cloudinary signature error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to generate Cloudinary signature' });
+  }
+});
+
+// POST /api/auth/avatar (User Profile picture upload - signed to Cloudinary folder "Aurra profile")
 router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { avatarUrl } = req.body || {};
-    if (!avatarUrl || typeof avatarUrl !== 'string') {
+    const { avatarUrl, imageBase64, remove } = req.body || {};
+    const now = new Date().toISOString();
+
+    // 1. Photo removal requested (clears user_profile in Supabase and SQLite)
+    if (remove || avatarUrl === null || avatarUrl === '') {
+      try {
+        db.prepare('UPDATE users SET avatar_url = NULL, user_profile = NULL, updated_at = ? WHERE id = ? OR email = ?')
+          .run(now, req.user!.id, req.user!.email);
+      } catch {}
+
+      try {
+        await supabase
+          .from('users')
+          .update({
+            user_profile: null,
+            avatar_url: null,
+            updated_at: now,
+          })
+          .eq('email', req.user!.email);
+      } catch (sbErr) {
+        console.warn('Supabase profile removal notice:', sbErr);
+      }
+
+      let updatedUser: any = null;
+      try {
+        updatedUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+      } catch {}
+
+      if (!updatedUser) {
+        updatedUser = {
+          ...req.user,
+          avatar_url: null,
+          user_profile: null,
+        };
+      }
+
+      return res.json({
+        success: true,
+        url: null,
+        user: updatedUser,
+      });
+    }
+
+    const inputData = avatarUrl || imageBase64;
+    if (!inputData || typeof inputData !== 'string') {
       return res.status(400).json({ error: 'Avatar image URL or data is required' });
     }
 
-    const now = new Date().toISOString();
+    let finalProfileUrl = inputData;
 
-    // 1. Update SQLite
-    db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?').run(avatarUrl, now, req.user!.id);
+    // If input is base64 or not yet hosted on Cloudinary, securely upload signed to Cloudinary folder "Aurra profile"
+    if (inputData.startsWith('data:image/') || !inputData.includes('res.cloudinary.com')) {
+      try {
+        const uploadRes = await uploadToCloudinarySigned(inputData, 'Aurra profile');
+        finalProfileUrl = uploadRes.url;
+      } catch (uploadErr: any) {
+        console.warn('[Cloudinary User Profile Upload] Error:', uploadErr.message);
+        if (inputData.startsWith('data:image/')) {
+          return res.status(500).json({ error: 'Failed to upload profile photo to Cloudinary' });
+        }
+      }
+    }
 
-    // 2. Update Supabase users table (capturing updated_at)
+    // 1. Update SQLite local database
     try {
-      await supabase
+      db.prepare('UPDATE users SET avatar_url = ?, user_profile = ?, updated_at = ? WHERE id = ? OR email = ?')
+        .run(finalProfileUrl, finalProfileUrl, now, req.user!.id, req.user!.email);
+    } catch {
+      try {
+        db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ? OR email = ?')
+          .run(finalProfileUrl, now, req.user!.id, req.user!.email);
+      } catch {}
+    }
+
+    // 2. Update Supabase users table: user_profile column as requested
+    try {
+      const { error: sbErr } = await supabase
         .from('users')
-        .update({ avatar_url: avatarUrl, updated_at: now })
+        .update({
+          user_profile: finalProfileUrl,
+          avatar_url: finalProfileUrl,
+          updated_at: now,
+        })
         .eq('email', req.user!.email);
+
+      if (sbErr) {
+        console.warn('Supabase user_profile update warning:', sbErr);
+      }
     } catch (sbErr) {
       console.warn('Supabase avatar update error:', sbErr);
     }
 
-    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
+    let updated: any;
+    try {
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+    } catch {
+      updated = null;
+    }
+
+    if (!updated) {
+      updated = {
+        ...req.user,
+        avatar_url: finalProfileUrl,
+        user_profile: finalProfileUrl,
+      };
+    }
 
     return res.json({
       success: true,
+      url: finalProfileUrl,
       user: updated,
     });
   } catch (err) {
@@ -1019,34 +1166,71 @@ router.delete('/products/:id', optionalAuth, async (req: Request, res: Response)
   }
 });
 
-// POST /api/products/upload-image (Admin only: upload beverage image file/base64)
+// POST /api/products/upload-image (Admin only: signed upload to Cloudinary folder "Aurra products")
 router.post('/products/upload-image', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { imageBase64, filename, productId, cloudinaryConfig } = req.body;
+    const { imageBase64, imageUrl, filename, productId, cloudinaryConfig } = req.body;
 
-    if (!imageBase64 || typeof imageBase64 !== 'string') {
-      return res.status(400).json({ error: 'imageBase64 string is required' });
+    const inputData = imageUrl || imageBase64;
+    if (!inputData || typeof inputData !== 'string') {
+      return res.status(400).json({ error: 'Image data or image URL is required' });
     }
 
-    // Save image via uploadService (Cloudinary if configured, else local storage)
-    const result = await saveBeverageImage(imageBase64, filename, cloudinaryConfig);
+    let resultUrl = inputData;
+    let provider: 'cloudinary' | 'local_storage' = 'cloudinary';
+    let sizeBytes = 0;
+    let finalFilename = filename || 'product';
+
+    if (inputData.startsWith('data:image/') || !inputData.includes('res.cloudinary.com')) {
+      try {
+        const uploadRes = await uploadToCloudinarySigned(inputData, 'Aurra products', cloudinaryConfig);
+        resultUrl = uploadRes.url;
+        provider = 'cloudinary';
+        sizeBytes = uploadRes.sizeBytes;
+        finalFilename = uploadRes.filename;
+      } catch (uploadErr: any) {
+        console.warn('[Cloudinary Admin Product Upload] Error, falling back to local storage:', uploadErr.message);
+        const fallbackRes = await saveBeverageImage(inputData, filename, cloudinaryConfig);
+        resultUrl = fallbackRes.url;
+        provider = fallbackRes.provider;
+        sizeBytes = fallbackRes.sizeBytes;
+        finalFilename = fallbackRes.filename;
+      }
+    }
+
+    const now = new Date().toISOString();
 
     // If productId is provided, associate this image with the product in database
-    let updatedProduct = null;
+    let updatedProduct: any = null;
     if (productId) {
-      const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+      const existing = db.prepare('SELECT id, name, beverage_name FROM products WHERE id = ?').get(productId) as any;
       if (existing) {
-        db.prepare('UPDATE products SET image_url = ? WHERE id = ?').run(result.url, productId);
+        db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE id = ?').run(resultUrl, now, productId);
         updatedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+
+        // Update Supabase products table: image_url column as requested
+        try {
+          const isNum = !isNaN(Number(productId));
+          if (isNum) {
+            await supabase.from('products').update({ image_url: resultUrl, updated_at: now }).eq('id', Number(productId));
+          }
+          const bevName = existing.beverage_name || existing.name;
+          if (bevName) {
+            await supabase.from('products').update({ image_url: resultUrl, updated_at: now }).ilike('beverage_name', bevName);
+          }
+        } catch (sbErr) {
+          console.warn('Supabase product image update warning:', sbErr);
+        }
       }
     }
 
     return res.status(201).json({
       success: true,
-      url: result.url,
-      filename: result.filename,
-      sizeBytes: result.sizeBytes,
-      provider: result.provider,
+      url: resultUrl,
+      filename: finalFilename,
+      sizeBytes,
+      provider,
+      folder: 'Aurra products',
       product: updatedProduct,
     });
   } catch (err: any) {
@@ -1056,7 +1240,7 @@ router.post('/products/upload-image', requireAuth, requireAdmin, async (req: Req
 });
 
 // PUT /api/products/:id/image (Admin only: direct association of image URL)
-router.put('/products/:id/image', requireAuth, requireAdmin, (req: Request, res: Response) => {
+router.put('/products/:id/image', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const productId = req.params.id;
     const { imageUrl } = req.body;
@@ -1065,13 +1249,28 @@ router.put('/products/:id/image', requireAuth, requireAdmin, (req: Request, res:
       return res.status(400).json({ error: 'imageUrl string is required' });
     }
 
-    const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+    const existing = db.prepare('SELECT id, name, beverage_name FROM products WHERE id = ?').get(productId) as any;
     if (!existing) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    db.prepare('UPDATE products SET image_url = ? WHERE id = ?').run(imageUrl, productId);
+    const now = new Date().toISOString();
+    db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE id = ?').run(imageUrl, now, productId);
     const updated = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+
+    // Update Supabase products table: image_url column as requested
+    try {
+      const isNum = !isNaN(Number(productId));
+      if (isNum) {
+        await supabase.from('products').update({ image_url: imageUrl, updated_at: now }).eq('id', Number(productId));
+      }
+      const bevName = existing.beverage_name || existing.name;
+      if (bevName) {
+        await supabase.from('products').update({ image_url: imageUrl, updated_at: now }).ilike('beverage_name', bevName);
+      }
+    } catch (sbErr) {
+      console.warn('Supabase product image update warning:', sbErr);
+    }
 
     return res.json({ success: true, product: updated });
   } catch (err) {

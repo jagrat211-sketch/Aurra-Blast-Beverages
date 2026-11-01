@@ -12,8 +12,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  let token: string | null = null;
+  try {
+    token = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_token') : null;
+  } catch {
+    // ignore
+  }
+
   const headers = {
     'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
 
@@ -240,13 +248,21 @@ export const api = {
 
   async login(payload: { email: string; password: string }) {
     try {
-      return await request<{
+      const res = await request<{
         success: boolean;
+        token?: string;
         user: User;
       }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+      if (res?.token) {
+        try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
+      }
+      if (res?.user) {
+        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+      }
+      return res;
     } catch (apiErr: any) {
       // Direct client fallback to Supabase if serverless backend returned 500 or cold-started
       try {
@@ -265,7 +281,8 @@ export const api = {
               email_verified: 1,
               created_at: sbUser.created_at,
               updated_at: sbUser.updated_at,
-              avatar_url: sbUser.avatar_url || sbUser.user_profile,
+              avatar_url: sbUser.user_profile || sbUser.avatar_url,
+              user_profile: sbUser.user_profile || sbUser.avatar_url,
               delivery_address: sbUser.delivery_address,
               parent_id: 'AURRA-DIST-IND-01',
             };
@@ -285,6 +302,7 @@ export const api = {
   async logout() {
     try {
       localStorage.removeItem('aurra_auth_user');
+      localStorage.removeItem('aurra_auth_token');
     } catch {}
     return request<{ success: boolean; message: string }>('/api/auth/logout', {
       method: 'POST',
@@ -293,17 +311,32 @@ export const api = {
 
   async adminLogin(payload: { username: string; password: string }) {
     try {
-      return await request<{
+      const res = await request<{
         success: boolean;
+        token?: string;
         user: User;
       }>('/api/auth/admin-login', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+      if (res?.token) {
+        try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
+      }
+      if (res?.user) {
+        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+      }
+      return res;
     } catch (apiErr: any) {
       const cleanUser = (payload.username || '').toLowerCase().trim();
       const cleanPass = (payload.password || '').trim().toLowerCase();
       if ((cleanUser === 'adminaurra@beverages.com' || cleanUser === 'admin' || cleanUser === 'admin@g.com') && cleanPass === 'admin') {
+        let profileUrl: string | undefined = undefined;
+        try {
+          const { supabase } = await import('./supabase.js');
+          const { data: sbAdmin } = await supabase.from('users').select('user_profile, avatar_url').eq('email', 'adminaurra@beverages.com').maybeSingle();
+          profileUrl = sbAdmin?.user_profile || sbAdmin?.avatar_url || undefined;
+        } catch {}
+
         const adminUser: User = {
           id: 'admin_sys_01',
           name: 'Aurra Administrator',
@@ -311,6 +344,8 @@ export const api = {
           role: 'admin',
           email_verified: 1,
           created_at: new Date().toISOString(),
+          avatar_url: profileUrl,
+          user_profile: profileUrl,
           parent_id: 'AURRA-HQ-01',
         };
         try {
@@ -332,14 +367,159 @@ export const api = {
     });
   },
 
-  async updateAvatar(payload: { avatarUrl: string }) {
+  async getCloudinarySignature(folder: 'Aurra profile' | 'Aurra products') {
     return request<{
       success: boolean;
-      user: User;
-    }>('/api/auth/avatar', {
+      signature: string;
+      timestamp: number;
+      apiKey: string;
+      cloudName: string;
+      folder: string;
+    }>('/api/cloudinary/sign', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ folder }),
     });
+  },
+
+  async uploadToCloudinarySigned(
+    file: File | string,
+    folder: 'Aurra profile' | 'Aurra products'
+  ): Promise<{ url: string; public_id: string; folder: string }> {
+    // 1. Get backend signature generated with API Secret
+    const signedParams = await this.getCloudinarySignature(folder);
+
+    // 2. Prepare FormData with required signed parameters
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('api_key', signedParams.apiKey);
+    formData.append('timestamp', String(signedParams.timestamp));
+    formData.append('folder', signedParams.folder);
+    formData.append('signature', signedParams.signature);
+
+    // 3. Post to Cloudinary signed image upload endpoint
+    const endpoint = `https://api.cloudinary.com/v1_1/${signedParams.cloudName}/image/upload`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Cloudinary signed upload failed (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    return {
+      url: data.secure_url || data.url,
+      public_id: data.public_id,
+      folder: data.asset_folder || folder,
+    };
+  },
+
+  async updateAvatar(payload: { avatarUrl?: string; imageBase64?: string; file?: File; remove?: boolean }) {
+    if (payload.remove) {
+      // 1. Direct Supabase user_profile update
+      try {
+        const { supabase } = await import('./supabase.js');
+        const userJson = localStorage.getItem('aurra_auth_user');
+        const userObj = userJson ? JSON.parse(userJson) : null;
+        if (userObj?.email) {
+          await supabase.from('users').update({
+            user_profile: null,
+            avatar_url: null,
+            updated_at: new Date().toISOString(),
+          }).eq('email', userObj.email);
+        }
+      } catch {}
+
+      // 2. Call backend
+      const res = await request<{
+        success: boolean;
+        url?: string | null;
+        user: User;
+      }>('/api/auth/avatar', {
+        method: 'POST',
+        body: JSON.stringify({ remove: true }),
+      }).catch(() => null);
+
+      const userJson = localStorage.getItem('aurra_auth_user');
+      const userObj = userJson ? JSON.parse(userJson) : null;
+      const updatedUser: User = res?.user || {
+        ...userObj,
+        avatar_url: undefined,
+        user_profile: undefined,
+      };
+      try {
+        localStorage.setItem('aurra_auth_user', JSON.stringify(updatedUser));
+      } catch {}
+      return { success: true, user: updatedUser, url: null };
+    }
+
+    let finalUrl = payload.avatarUrl;
+
+    // If file or imageBase64 is passed, attempt client-side signed upload to "Aurra profile"
+    if (!finalUrl && (payload.file || payload.imageBase64)) {
+      try {
+        const itemToUpload = payload.file || payload.imageBase64!;
+        const uploadRes = await this.uploadToCloudinarySigned(itemToUpload, 'Aurra profile');
+        finalUrl = uploadRes.url;
+      } catch (clientUploadErr) {
+        console.warn('Direct Cloudinary signed upload fallback to server endpoint:', clientUploadErr);
+      }
+    }
+
+    // 1. Direct Supabase synchronization guarantee:
+    if (finalUrl) {
+      try {
+        const { supabase } = await import('./supabase.js');
+        const userJson = localStorage.getItem('aurra_auth_user');
+        const userObj = userJson ? JSON.parse(userJson) : null;
+        if (userObj?.email) {
+          await supabase.from('users').update({
+            user_profile: finalUrl,
+            avatar_url: finalUrl,
+            updated_at: new Date().toISOString(),
+          }).eq('email', userObj.email);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase direct update warning:', sbErr);
+      }
+    }
+
+    // 2. Call server route
+    let serverRes: any = null;
+    try {
+      serverRes = await request<{
+        success: boolean;
+        url?: string;
+        user: User;
+      }>('/api/auth/avatar', {
+        method: 'POST',
+        body: JSON.stringify({
+          avatarUrl: finalUrl,
+          imageBase64: !finalUrl ? payload.imageBase64 : undefined,
+        }),
+      });
+    } catch (srvErr) {
+      console.warn('Server avatar update note (using direct result):', srvErr);
+    }
+
+    const userJson = localStorage.getItem('aurra_auth_user');
+    const userObj = userJson ? JSON.parse(userJson) : null;
+    const resolvedUser: User = serverRes?.user || {
+      ...userObj,
+      avatar_url: finalUrl,
+      user_profile: finalUrl,
+    };
+    try {
+      localStorage.setItem('aurra_auth_user', JSON.stringify(resolvedUser));
+    } catch {}
+
+    return {
+      success: true,
+      url: finalUrl,
+      user: resolvedUser,
+    };
   },
 
   // Products
@@ -583,21 +763,43 @@ export const api = {
   },
 
   async uploadBeverageImage(payload: {
-    imageBase64: string;
+    imageBase64?: string;
+    imageUrl?: string;
+    file?: File;
     filename?: string;
     productId?: string;
     cloudinaryConfig?: { cloudName?: string; uploadPreset?: string };
   }) {
+    let finalUrl = payload.imageUrl;
+
+    // If file or imageBase64 is passed, attempt client-side signed upload to "Aurra products"
+    if (!finalUrl && (payload.file || payload.imageBase64)) {
+      try {
+        const itemToUpload = payload.file || payload.imageBase64!;
+        const uploadRes = await this.uploadToCloudinarySigned(itemToUpload, 'Aurra products');
+        finalUrl = uploadRes.url;
+      } catch (clientUploadErr) {
+        console.warn('Direct Cloudinary product signed upload fallback to server:', clientUploadErr);
+      }
+    }
+
     return request<{
       success: boolean;
       url: string;
       filename: string;
       sizeBytes: number;
       provider: 'local_storage' | 'cloudinary';
+      folder?: string;
       product?: Product;
     }>('/api/products/upload-image', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        imageUrl: finalUrl,
+        imageBase64: !finalUrl ? payload.imageBase64 : undefined,
+        productId: payload.productId,
+        filename: payload.filename,
+        cloudinaryConfig: payload.cloudinaryConfig,
+      }),
     });
   },
 

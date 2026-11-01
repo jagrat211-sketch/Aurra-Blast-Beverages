@@ -16,9 +16,13 @@ import {
   Sparkles,
   KeyRound,
   MapPin,
-  Phone
+  Phone,
+  Crop,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { ImageCropModal } from './ImageCropModal';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -50,7 +54,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   // Avatar upload state
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarSuccess, setAvatarSuccess] = useState(false);
+  const [avatarSuccess, setAvatarSuccess] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -131,32 +138,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Please upload a valid image file (PNG, JPG, WEBP).');
+      setAvatarError('Please upload a valid image file (PNG, JPG, WEBP).');
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Image file size must be under 5MB.');
+    if (file.size > 8 * 1024 * 1024) {
+      setAvatarError('Image file size must be under 8MB.');
       return;
     }
+
+    setAvatarError(null);
+    setAvatarSuccess(null);
 
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const base64 = reader.result as string;
-      setUploadingAvatar(true);
-      setAvatarSuccess(false);
-      try {
-        await updateAvatar(base64);
-        setAvatarSuccess(true);
-        setTimeout(() => setAvatarSuccess(false), 3000);
-      } catch (err: any) {
-        alert(err.message || 'Failed to update avatar photo');
-      } finally {
-        setUploadingAvatar(false);
-      }
+      setPendingAvatar(base64);
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
+
+  const handleSaveAvatar = async () => {
+    if (!pendingAvatar) return;
+    setUploadingAvatar(true);
+    setAvatarError(null);
+    setAvatarSuccess(null);
+    try {
+      await updateAvatar(pendingAvatar);
+      setAvatarSuccess('Profile photo uploaded to Cloudinary & saved to database!');
+      setPendingAvatar(null);
+      setTimeout(() => setAvatarSuccess(null), 4000);
+    } catch (err: any) {
+      setAvatarError(err.message || 'Failed to save avatar photo to Cloudinary/database');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleCancelPending = () => {
+    setPendingAvatar(null);
+    setAvatarError(null);
+  };
+
+  const handleRemoveAvatar = async () => {
+    setUploadingAvatar(true);
+    setAvatarError(null);
+    setAvatarSuccess(null);
+    try {
+      await updateAvatar('', undefined, true);
+      setPendingAvatar(null);
+      setAvatarSuccess('Profile photo removed.');
+      setTimeout(() => setAvatarSuccess(null), 3000);
+    } catch (err: any) {
+      setAvatarError(err.message || 'Failed to remove profile photo');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleCropComplete = (croppedBase64: string) => {
+    setPendingAvatar(croppedBase64);
+    setIsCropModalOpen(false);
+  };
+
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -262,71 +307,156 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         {/* TAB 1: Profile & Membership info */}
         {activeTab === 'profile' && (
           <div className="mt-4 flex-1 overflow-y-auto pr-1 space-y-4">
-            {/* Avatar & Photo Upload */}
-            <div className="flex items-center gap-4 p-3.5 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
-              <div className="relative group">
-                {user.avatar_url ? (
-                  <img
-                    src={user.avatar_url}
-                    alt={user.name}
-                    className="h-14 w-14 rounded-full object-cover border-2 border-amber-400 shadow-md ring-2 ring-white dark:ring-slate-800"
-                  />
-                ) : (
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-tr from-amber-500 to-orange-400 text-white text-lg font-black uppercase shadow-md ring-2 ring-white dark:ring-slate-800">
-                    {user.name?.charAt(0) || 'A'}
-                  </div>
-                )}
-                
-                <button
-                  type="button"
-                  disabled={uploadingAvatar}
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Upload profile photo"
-                  className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-white shadow-md hover:bg-amber-500 transition-colors cursor-pointer"
-                >
-                  {uploadingAvatar ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Camera className="h-2.5 w-2.5" />}
-                </button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept="image/*"
-                  className="hidden"
-                />
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.name}</h4>
-                  {user.role === 'admin' ? (
-                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200/60">
-                      Aurra Administrator
-                    </span>
+            {/* Avatar & Photo Upload with Immediate Preview, Crop, Save, and Remove */}
+            <div className="flex flex-col gap-3 p-3.5 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-4">
+                <div className="relative group shrink-0">
+                  {/* Photo or Initials: when a photo is selected or saved, initials disappear! */}
+                  {pendingAvatar || user.user_profile || user.avatar_url ? (
+                    <img
+                      src={pendingAvatar || user.user_profile || user.avatar_url}
+                      alt={user.name}
+                      className="h-16 w-16 rounded-full object-cover border-2 border-amber-400 shadow-md ring-2 ring-white dark:ring-slate-800"
+                    />
                   ) : (
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200/50">
-                      Verified Member
-                    </span>
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-tr from-amber-500 to-orange-400 text-white text-xl font-black uppercase shadow-md ring-2 ring-white dark:ring-slate-800">
+                      {user.name?.charAt(0) || 'A'}
+                    </div>
                   )}
-                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/30">
-                    Aurra Club Member
-                  </span>
+                  
+                  <button
+                    type="button"
+                    disabled={uploadingAvatar}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Upload profile photo"
+                    className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-white shadow-md hover:bg-amber-500 transition-colors cursor-pointer"
+                  >
+                    {uploadingAvatar ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{user.email}</p>
-                
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 underline cursor-pointer"
-                >
-                  {user.avatar_url ? 'Change profile photo' : 'Upload photo'}
-                </button>
 
-                {avatarSuccess && (
-                  <span className="ml-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                    Photo updated!
-                  </span>
-                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.name}</h4>
+                    {user.role === 'admin' ? (
+                      <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200/60">
+                        Aurra Administrator
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200/50">
+                        Verified Member
+                      </span>
+                    )}
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/30">
+                      Aurra Club Member
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{user.email}</p>
+                  
+                  {/* Photo Action Buttons */}
+                  <div className="mt-2 flex items-center flex-wrap gap-2">
+                    {pendingAvatar ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleSaveAvatar}
+                          disabled={uploadingAvatar}
+                          className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {uploadingAvatar ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span>Uploading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="h-3 w-3" />
+                              <span>Save Photo</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsCropModalOpen(true)}
+                          disabled={uploadingAvatar}
+                          className="flex items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/40 hover:bg-amber-500/25 transition-colors cursor-pointer"
+                        >
+                          <Crop className="h-3 w-3" />
+                          <span>Crop</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleCancelPending}
+                          disabled={uploadingAvatar}
+                          title="Discard preview"
+                          className="flex items-center gap-1 rounded-lg bg-slate-200 px-2 py-1 text-[11px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-300 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950/60 dark:hover:text-rose-300 transition-colors cursor-pointer"
+                        >
+                          <X className="h-3 w-3" />
+                          <span>Cancel</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploadingAvatar}
+                          className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 underline cursor-pointer"
+                        >
+                          {user.user_profile || user.avatar_url ? 'Change photo' : 'Upload photo'}
+                        </button>
+
+                        {(user.user_profile || user.avatar_url) && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setIsCropModalOpen(true)}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-300 cursor-pointer"
+                            >
+                              <Crop className="h-3 w-3" />
+                              <span>Crop</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleRemoveAvatar}
+                              disabled={uploadingAvatar}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 dark:text-rose-400 cursor-pointer"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Remove (✕)</span>
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {/* Status and Feedback info */}
+              {avatarError && (
+                <div className="flex items-center gap-1.5 rounded-lg bg-red-50 p-2 text-[11px] text-red-700 dark:bg-red-950/50 dark:text-red-300 border border-red-200/60">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span>{avatarError}</span>
+                </div>
+              )}
+
+              {avatarSuccess && (
+                <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 p-2 text-[11px] text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200/60">
+                  <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  <span>{avatarSuccess}</span>
+                </div>
+              )}
             </div>
 
             {/* Display Name Edit Field */}
@@ -586,6 +716,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
           </form>
         )}
       </div>
+
+      {/* Interactive Image Cropper with pan, zoom, rotation */}
+      <ImageCropModal
+        isOpen={isCropModalOpen}
+        imageSrc={pendingAvatar || user.user_profile || user.avatar_url || ''}
+        aspectRatio={1}
+        circularCrop={true}
+        onClose={() => setIsCropModalOpen(false)}
+        onCropComplete={handleCropComplete}
+      />
     </div>
   );
 };

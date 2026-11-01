@@ -7,6 +7,7 @@ export interface User {
   created_at?: string;
   updated_at?: string;
   avatar_url?: string;
+  user_profile?: string;
   delivery_address?: string;
   contact_no?: string;
   parent_id?: string;

@@ -17,8 +17,8 @@ export const AuthPage: React.FC = () => {
 
   // Admin Login state
   const [isAdminMode, setIsAdminMode] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('adminaurra@beverages.com');
-  const [adminPassword, setAdminPassword] = useState('admin');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
 
   // Sign up form state
   const [signupName, setSignupName] = useState('');
@@ -79,7 +79,7 @@ export const AuthPage: React.FC = () => {
         navigate('/admin');
       }
     } catch (err: any) {
-      setLoginError(err.message || 'Invalid admin credentials. Use adminaurra@beverages.com / admin');
+      setLoginError(err.message || 'Invalid administrator credentials. Please check your email and password.');
     } finally {
       setLoginLoading(false);
     }
@@ -336,7 +336,7 @@ export const AuthPage: React.FC = () => {
                       Sign in as Administrator
                     </span>
                     <p className="text-[11px] text-purple-700/80 dark:text-purple-400 mt-1">
-                      Credentials: <span className="font-mono font-bold">adminaurra@beverages.com</span> / <span className="font-mono font-bold">admin</span>
+                      Enter your authorized administrator credentials to manage products and store settings.
                     </p>
                   </div>
 
@@ -357,7 +357,7 @@ export const AuthPage: React.FC = () => {
                         type="text"
                         value={adminEmail}
                         onChange={(e) => setAdminEmail(e.target.value)}
-                        placeholder="adminaurra@beverages.com"
+                        placeholder="Enter admin email or username"
                         className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         required
                       />
@@ -374,7 +374,7 @@ export const AuthPage: React.FC = () => {
                         type="password"
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
-                        placeholder="Admin"
+                        placeholder="••••••••"
                         className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         required
                       />

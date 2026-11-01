@@ -11,6 +11,7 @@ export interface SupabaseUserRow {
   role: 'user' | 'admin' | string;
   delivery_address?: string;
   avatar_url?: string;
+  user_profile?: string;
   created_at?: string;
   updated_at?: string;
 }

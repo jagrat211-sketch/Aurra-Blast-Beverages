@@ -1,76 +1,156 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
-// Ensure uploads/beverages directory exists
+// Cloudinary default credentials provided by the user
+export const CLOUDINARY_DEFAULTS = {
+  cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'crmfblxb',
+  apiKey: process.env.CLOUDINARY_API_KEY || '358848824773251',
+  apiSecret: process.env.CLOUDINARY_API_SECRET || 'N56wBR13WVZ7u-9LnJYH97ClB98',
+  uploadPreset: process.env.CLOUDINARY_UPLOAD_PRESET || 'aurra_preset',
+};
+
+// Ensure uploads/beverages directory exists for fallback local storage
 const uploadsDir = path.resolve(process.cwd(), 'uploads', 'beverages');
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch {
+    // Ignore in read-only environments
+  }
 }
 
 export interface UploadResult {
   url: string;
   filename: string;
   sizeBytes: number;
-  provider: 'local_storage' | 'cloudinary';
+  provider: 'cloudinary' | 'local_storage';
+  folder?: string;
   width?: number;
   height?: number;
 }
 
 export interface CloudinaryConfig {
   cloudName?: string;
-  uploadPreset?: string;
   apiKey?: string;
   apiSecret?: string;
+  uploadPreset?: string;
 }
 
 /**
- * Saves a base64 encoded image to either Cloudinary (if configured) or local persistent storage.
+ * Generates an authenticated SHA-1 signature for Cloudinary signed uploads.
+ * Cloudinary signs all parameters (alphabetically sorted) concatenated with the API Secret.
+ */
+export function generateCloudinarySignature(
+  paramsToSign: Record<string, string | number>,
+  apiSecret: string = CLOUDINARY_DEFAULTS.apiSecret
+): string {
+  const sortedKeys = Object.keys(paramsToSign).sort();
+  const serialized = sortedKeys
+    .map((k) => `${k}=${paramsToSign[k]}`)
+    .join('&');
+  return crypto.createHash('sha1').update(serialized + apiSecret).digest('hex');
+}
+
+/**
+ * Creates signed parameters for client-side direct uploads to Cloudinary.
+ * Enforces folder separation:
+ * - "Aurra profile" for user profile pictures
+ * - "Aurra products" for admin product images
+ */
+export function getSignedUploadParams(
+  folder: 'Aurra profile' | 'Aurra products',
+  customConfig?: CloudinaryConfig
+) {
+  const cloudName = customConfig?.cloudName || CLOUDINARY_DEFAULTS.cloudName;
+  const apiKey = customConfig?.apiKey || CLOUDINARY_DEFAULTS.apiKey;
+  const apiSecret = customConfig?.apiSecret || CLOUDINARY_DEFAULTS.apiSecret;
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const paramsToSign: Record<string, string | number> = {
+    folder,
+    timestamp,
+  };
+
+  const signature = generateCloudinarySignature(paramsToSign, apiSecret);
+
+  return {
+    signature,
+    timestamp,
+    apiKey,
+    cloudName,
+    folder,
+  };
+}
+
+/**
+ * Securely uploads an image to Cloudinary using signed authentication.
+ * Never uses unsigned uploads.
+ */
+export async function uploadToCloudinarySigned(
+  fileData: string,
+  folder: 'Aurra profile' | 'Aurra products',
+  customConfig?: CloudinaryConfig
+): Promise<UploadResult> {
+  const cloudName = customConfig?.cloudName || CLOUDINARY_DEFAULTS.cloudName;
+  const apiKey = customConfig?.apiKey || CLOUDINARY_DEFAULTS.apiKey;
+  const apiSecret = customConfig?.apiSecret || CLOUDINARY_DEFAULTS.apiSecret;
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const paramsToSign: Record<string, string | number> = {
+    folder,
+    timestamp,
+  };
+
+  const signature = generateCloudinarySignature(paramsToSign, apiSecret);
+
+  const formData = new FormData();
+  formData.append('file', fileData);
+  formData.append('api_key', apiKey);
+  formData.append('timestamp', String(timestamp));
+  formData.append('folder', folder);
+  formData.append('signature', signature);
+
+  const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Cloudinary signed upload error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  return {
+    url: data.secure_url || data.url,
+    filename: data.public_id,
+    sizeBytes: data.bytes || 0,
+    provider: 'cloudinary',
+    folder: data.asset_folder || folder,
+    width: data.width,
+    height: data.height,
+  };
+}
+
+/**
+ * Saves a beverage product image to Cloudinary (folder "Aurra products") using signed authentication.
+ * Falls back to local storage if network fails.
  */
 export async function saveBeverageImage(
   base64Data: string,
   originalFilename?: string,
   customCloudinary?: CloudinaryConfig
 ): Promise<UploadResult> {
-  // Check if Cloudinary is configured via custom args or environment variables
-  const cloudName = customCloudinary?.cloudName || process.env.CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = customCloudinary?.uploadPreset || process.env.CLOUDINARY_UPLOAD_PRESET;
-
-  // 1. If Cloudinary credentials or preset provided, upload directly to Cloudinary
-  if (cloudName && uploadPreset) {
-    try {
-      const formData = new URLSearchParams();
-      formData.append('file', base64Data);
-      formData.append('upload_preset', uploadPreset);
-      formData.append('folder', 'aura_beverages');
-
-      const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData.toString(),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        console.warn(`[Cloudinary] Upload failed (${res.status}): ${errText}. Falling back to local storage.`);
-      } else {
-        const data = await res.json();
-        return {
-          url: data.secure_url || data.url,
-          filename: data.public_id,
-          sizeBytes: data.bytes || 0,
-          provider: 'cloudinary',
-          width: data.width,
-          height: data.height,
-        };
-      }
-    } catch (err) {
-      console.warn('[Cloudinary] Network error, falling back to local storage:', err);
-    }
+  // Always attempt signed Cloudinary upload first
+  try {
+    return await uploadToCloudinarySigned(base64Data, 'Aurra products', customCloudinary);
+  } catch (err: any) {
+    console.warn('[Cloudinary Signed Upload] Failed, falling back to local storage:', err.message);
   }
 
-  // 2. Local persistent storage fallback
-  // Extract extension and buffer
+  // Local storage fallback
   let ext = 'jpg';
   let cleanBase64 = base64Data;
 
@@ -94,15 +174,17 @@ export async function saveBeverageImage(
   const filename = `${safeBaseName}_${timestamp}.${ext}`;
   const filePath = path.join(uploadsDir, filename);
 
-  fs.writeFileSync(filePath, buffer);
-
-  // Return public URL path served by Express
-  const publicUrl = `/uploads/beverages/${filename}`;
+  try {
+    fs.writeFileSync(filePath, buffer);
+  } catch (fsErr) {
+    console.warn('Could not write to local uploads directory:', fsErr);
+  }
 
   return {
-    url: publicUrl,
+    url: `/uploads/beverages/${filename}`,
     filename,
     sizeBytes: buffer.length,
     provider: 'local_storage',
+    folder: 'local',
   };
 }

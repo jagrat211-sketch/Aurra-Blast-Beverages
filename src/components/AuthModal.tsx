@@ -55,7 +55,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }
     } catch (err: any) {
-      setError(err.message || 'Invalid admin credentials. Use adminaurra@beverages.com / admin');
+      setError(err.message || 'Invalid administrator credentials. Please check your email and password.');
     } finally {
       setLoading(false);
     }
@@ -306,10 +306,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <div className="relative">
                     <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                     <input
-                      type="email"
+                      type="text"
                       value={adminEmail}
                       onChange={(e) => setAdminEmail(e.target.value)}
-                      placeholder="adminaurra@beverages.com"
+                      placeholder="Enter admin email or username"
                       autoComplete="username"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       required
@@ -327,7 +327,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="password"
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Enter admin password"
+                      placeholder="••••••••"
                       autoComplete="current-password"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       required

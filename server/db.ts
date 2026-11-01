@@ -137,6 +137,9 @@ export function initDatabase() {
     if (!colNames.includes('avatar_url')) {
       db.prepare("ALTER TABLE users ADD COLUMN avatar_url TEXT").run();
     }
+    if (!colNames.includes('user_profile')) {
+      db.prepare("ALTER TABLE users ADD COLUMN user_profile TEXT").run();
+    }
     if (!colNames.includes('parent_id')) {
       db.prepare("ALTER TABLE users ADD COLUMN parent_id TEXT DEFAULT 'AURRA-DIST-IND-01'").run();
     }

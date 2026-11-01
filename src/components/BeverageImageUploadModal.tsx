@@ -9,10 +9,13 @@ import {
   RefreshCw,
   Sparkles,
   Link as LinkIcon,
-  AlertCircle
+  AlertCircle,
+  Crop,
+  Trash2,
 } from 'lucide-react';
 import { Product } from '../types';
 import { api } from '../services/api';
+import { ImageCropModal } from './ImageCropModal';
 
 interface BeverageImageUploadModalProps {
   isOpen: boolean;
@@ -40,6 +43,7 @@ export const BeverageImageUploadModal: React.FC<BeverageImageUploadModalProps> =
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<string | null>(null);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen || !product) return null;
@@ -135,13 +139,14 @@ export const BeverageImageUploadModal: React.FC<BeverageImageUploadModalProps> =
 
       const res = await api.uploadBeverageImage({
         imageBase64: base64Data,
+        file: selectedFile || undefined,
         filename: selectedFile?.name || `${product.id}.jpg`,
         productId: product.id,
         cloudinaryConfig,
       });
 
-      const providerLabel = res.provider === 'cloudinary' ? 'Cloudinary CDN' : 'Local Persistent Storage';
-      setSuccessInfo(`Image uploaded to ${providerLabel} and saved to database!`);
+      const providerLabel = res.provider === 'cloudinary' ? 'Cloudinary ("Aurra products" folder)' : 'Local Storage';
+      setSuccessInfo(`Image securely uploaded to ${providerLabel} and saved to database!`);
 
       setTimeout(() => {
         if (res.product) {
@@ -387,9 +392,38 @@ export const BeverageImageUploadModal: React.FC<BeverageImageUploadModalProps> =
 
           {/* Live Preview Container (Actual Shop Card Aspect 4:3) */}
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
-            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-2">
-              Live Storefront Preview (4:3 Card Format)
-            </span>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                Live Storefront Preview (4:3 Card Format)
+              </span>
+              {previewUrl && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCropModalOpen(true)}
+                    className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-500/20 dark:bg-amber-950/60 dark:text-amber-300 transition-colors cursor-pointer"
+                  >
+                    <Crop className="h-3 w-3" />
+                    <span>Crop / Adjust</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewUrl('');
+                      setBase64Data('');
+                      setSelectedFile(null);
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Clear (✕)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-4">
               <div className="relative aspect-4/3 w-36 overflow-hidden rounded-xl border border-slate-200 bg-slate-200 dark:border-slate-700 dark:bg-slate-800 shrink-0">
                 {previewUrl ? (
@@ -418,7 +452,7 @@ export const BeverageImageUploadModal: React.FC<BeverageImageUploadModalProps> =
                   Price: ₹{product.price}
                 </div>
                 <div className="text-[10px] text-slate-400">
-                  Target: <code>products.image_url</code> in SQLite DB
+                  Cloudinary Folder: <code>Aurra products</code> (Signed) → Supabase <code>products.image_url</code>
                 </div>
               </div>
             </div>
@@ -458,6 +492,20 @@ export const BeverageImageUploadModal: React.FC<BeverageImageUploadModalProps> =
         </div>
 
       </div>
+
+      {/* Product Image Cropper */}
+      <ImageCropModal
+        isOpen={isCropModalOpen}
+        imageSrc={previewUrl}
+        aspectRatio={4 / 3}
+        circularCrop={false}
+        onClose={() => setIsCropModalOpen(false)}
+        onCropComplete={(cropped) => {
+          setPreviewUrl(cropped);
+          setBase64Data(cropped);
+          setIsCropModalOpen(false);
+        }}
+      />
     </div>
   );
 };

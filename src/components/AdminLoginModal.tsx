@@ -12,8 +12,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const { adminLogin } = useAuth();
   const navigate = useNavigate();
 
-  const [username, setUsername] = useState('adminaurra@beverages.com');
-  const [password, setPassword] = useState('admin');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +29,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       onClose();
       navigate('/admin');
     } catch (err: any) {
-      setError(err.message || 'Invalid admin credentials. Use adminaurra@beverages.com / admin.');
+      setError(err.message || 'Invalid administrator credentials. Please check your username and password.');
     } finally {
       setLoading(false);
     }
@@ -59,27 +59,16 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
           </p>
         </div>
 
-        {/* Credentials Banner */}
-        <div className="my-4 rounded-2xl bg-amber-50/80 p-3.5 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
-          <div className="flex items-center gap-1.5 font-bold mb-1">
-            <Database className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-            <span>Admin Credentials</span>
-          </div>
-          <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
-            Email: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">adminaurra@beverages.com</strong> &amp; password: <strong className="font-mono bg-white/60 dark:bg-slate-800 px-1 py-0.5 rounded">admin</strong>.
-          </p>
-        </div>
-
         {/* Error notification */}
         {error && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
+          <div className="my-4 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
             <label htmlFor="admin-username-input" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
               Admin Username
@@ -91,7 +80,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
+                placeholder="Enter admin username or email"
                 className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
               />
             </div>
@@ -108,7 +97,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="admin"
+                placeholder="••••••••"
                 className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
               />
             </div>
