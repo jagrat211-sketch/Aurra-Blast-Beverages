@@ -344,16 +344,81 @@ export const api = {
 
   // Products
   async getProducts(): Promise<{ products: Product[] }> {
+    let prodsFromApi: Product[] | null = null;
     try {
       const res = await request<{ products: Product[] }>('/api/products');
       if (res && Array.isArray(res.products) && res.products.length > 0) {
-        return res;
+        prodsFromApi = res.products;
       }
-      return { products: FALLBACK_PRODUCTS };
     } catch (err) {
-      console.warn('Network product fetch notice (using instant client catalog):', err);
-      return { products: FALLBACK_PRODUCTS };
+      console.warn('Backend /api/products unavailable (falling back to direct Supabase):', err);
     }
+
+    // Direct Supabase query to guarantee real-time reflection of all entries (including 13, 14, and all new formulations)
+    try {
+      const { supabase } = await import('./supabase.js');
+      const { data: sbProds } = await supabase
+        .from('products')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (sbProds && sbProds.length > 0) {
+        // Base list initialized with either prodsFromApi or FALLBACK_PRODUCTS
+        const baseList: Product[] = prodsFromApi && prodsFromApi.length > 0
+          ? [...prodsFromApi]
+          : FALLBACK_PRODUCTS.map((p) => ({ ...p }));
+
+        for (const sbP of sbProds) {
+          const mapped: Product = {
+            id: String(sbP.id),
+            name: sbP.beverage_name || 'Aurra Beverage',
+            flavor: sbP.flavor_notes || 'Botanical Sparkler',
+            price: Number(sbP.price) || 149,
+            image_url: sbP.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg',
+            description: sbP.description || '',
+            volume: sbP.volume || '330ml',
+            calories: typeof sbP.calories === 'number' ? sbP.calories : 40,
+            category: sbP.category || 'Botanical Sparkler',
+            total_quantity: typeof sbP.total_quantity === 'number' ? sbP.total_quantity : 50,
+            remaining_quantity:
+              typeof sbP.remaining_quantity === 'number'
+                ? sbP.remaining_quantity
+                : typeof sbP.total_quantity === 'number'
+                ? sbP.total_quantity
+                : 50,
+            active: sbP.active !== undefined ? (sbP.active ? 1 : 0) : 1,
+            created_at: sbP.created_at || new Date().toISOString(),
+          };
+
+          const matchIndex = baseList.findIndex(
+            (p) =>
+              p.name?.toLowerCase().trim() === mapped.name?.toLowerCase().trim() ||
+              p.id === mapped.id ||
+              (p as any).beverage_name?.toLowerCase().trim() === mapped.name?.toLowerCase().trim()
+          );
+
+          if (matchIndex >= 0) {
+            baseList[matchIndex] = {
+              ...baseList[matchIndex],
+              ...mapped,
+              image_url: mapped.image_url || baseList[matchIndex].image_url,
+            };
+          } else {
+            baseList.push(mapped);
+          }
+        }
+
+        return { products: baseList };
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase fetch notice:', sbErr);
+    }
+
+    if (prodsFromApi && prodsFromApi.length > 0) {
+      return { products: prodsFromApi };
+    }
+
+    return { products: FALLBACK_PRODUCTS };
   },
 
   async saveProduct(payload: Partial<Product>) {
@@ -368,6 +433,7 @@ export const api = {
     }
 
     // Direct Supabase synchronization: guarantee write to Supabase products table!
+    let savedSbProduct: Product | null = null;
     try {
       const { supabase } = await import('./supabase.js');
       const bevName = (payload.beverage_name || payload.name || '').trim();
@@ -377,15 +443,17 @@ export const api = {
         ? payload.image_url.replace('/src/assets/images/', '/assets/images/')
         : (payload.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg');
 
-      // Check if product exists in Supabase by beverage_name
-      const { data: existingSbProd } = await supabase
-        .from('products')
-        .select('id')
-        .ilike('beverage_name', bevName)
-        .maybeSingle();
+      // Check if product exists in Supabase by beverage_name or id
+      let query = supabase.from('products').select('*');
+      if (payload.id && !isNaN(Number(payload.id))) {
+        query = query.eq('id', Number(payload.id));
+      } else {
+        query = query.ilike('beverage_name', bevName);
+      }
+      const { data: existingSbProd } = await query.maybeSingle();
 
       if (existingSbProd?.id) {
-        await supabase
+        const { data: updated } = await supabase
           .from('products')
           .update({
             beverage_name: bevName,
@@ -394,15 +462,38 @@ export const api = {
             price: Number(payload.price) || 149,
             category: cat,
             total_quantity: Number(payload.total_quantity) || 50,
-            remaining_quantity: Number(payload.remaining_quantity) || Number(payload.total_quantity) || 50,
+            remaining_quantity:
+              payload.remaining_quantity !== undefined
+                ? Number(payload.remaining_quantity)
+                : Number(payload.total_quantity) || 50,
             volume: payload.volume || '330ml',
             calories: Number(payload.calories) || 40,
             image_url: cleanImg,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', existingSbProd.id);
+          .eq('id', existingSbProd.id)
+          .select()
+          .maybeSingle();
+
+        if (updated) {
+          savedSbProduct = {
+            id: String(updated.id),
+            name: updated.beverage_name,
+            flavor: updated.flavor_notes || 'Botanical Sparkler',
+            price: Number(updated.price) || 149,
+            image_url: updated.image_url,
+            description: updated.description || '',
+            volume: updated.volume || '330ml',
+            calories: updated.calories || 40,
+            category: updated.category || 'Botanical Sparkler',
+            total_quantity: updated.total_quantity || 50,
+            remaining_quantity: updated.remaining_quantity !== undefined ? updated.remaining_quantity : 50,
+            active: 1,
+            created_at: updated.created_at || new Date().toISOString(),
+          };
+        }
       } else {
-        await supabase
+        const { data: inserted } = await supabase
           .from('products')
           .insert({
             beverage_name: bevName,
@@ -411,15 +502,42 @@ export const api = {
             price: Number(payload.price) || 149,
             category: cat,
             total_quantity: Number(payload.total_quantity) || 50,
-            remaining_quantity: Number(payload.remaining_quantity) || Number(payload.total_quantity) || 50,
+            remaining_quantity:
+              payload.remaining_quantity !== undefined
+                ? Number(payload.remaining_quantity)
+                : Number(payload.total_quantity) || 50,
             volume: payload.volume || '330ml',
             calories: Number(payload.calories) || 40,
             image_url: cleanImg,
             created_at: new Date().toISOString(),
-          });
+          })
+          .select()
+          .maybeSingle();
+
+        if (inserted) {
+          savedSbProduct = {
+            id: String(inserted.id),
+            name: inserted.beverage_name,
+            flavor: inserted.flavor_notes || 'Botanical Sparkler',
+            price: Number(inserted.price) || 149,
+            image_url: inserted.image_url,
+            description: inserted.description || '',
+            volume: inserted.volume || '330ml',
+            calories: inserted.calories || 40,
+            category: inserted.category || 'Botanical Sparkler',
+            total_quantity: inserted.total_quantity || 50,
+            remaining_quantity: inserted.remaining_quantity !== undefined ? inserted.remaining_quantity : 50,
+            active: 1,
+            created_at: inserted.created_at || new Date().toISOString(),
+          };
+        }
       }
     } catch (sbErr) {
       console.warn('Direct Supabase product persistence notice:', sbErr);
+    }
+
+    if (savedSbProduct) {
+      return { success: true, product: savedSbProduct };
     }
 
     if (result) return result;

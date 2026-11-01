@@ -25,6 +25,17 @@ import { api } from '../services/api';
 import { Product, CartEventRecord } from '../types';
 import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal';
 
+export const BEVERAGE_CATEGORIES = [
+  'Botanical Sparkler',
+  'Artisan Cold Brew',
+  'Zero-Sugar Tonic',
+  'Hydration Elixir',
+  'Fruit Infusion',
+  'Sparkling Adaptogen',
+  'Herbal Spritz',
+  'Citrus Soda Craft',
+] as const;
+
 export const AdminPage: React.FC = () => {
   const { user, loading: authLoading } = useAuth();
   const { isAuraTributeEnabled, toggleAuraTribute, setAuraTributeEnabled, loading: flagLoading } = useFeatureFlags();
@@ -42,18 +53,18 @@ export const AdminPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [isEditingProduct, setIsEditingProduct] = useState(false);
-  
+
   // New product form with full Inventory & Stock Management fields
   const [productForm, setProductForm] = useState({
     id: '',
     name: '',
     flavor: '',
-    price: 159,
+    price: '' as string | number,
     image_url: '',
     description: '',
-    volume: '330ml',
-    calories: 40,
-    category: 'Botanical Sparkler',
+    volume: '',
+    calories: '' as string | number,
+    category: '',
     total_quantity: 50,
     remaining_quantity: 50,
     active: 1,
@@ -163,8 +174,36 @@ export const AdminPage: React.FC = () => {
 
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!productForm.name.trim()) {
+      alert('Please enter a beverage name');
+      return;
+    }
+    if (!productForm.flavor.trim()) {
+      alert('Please enter flavor notes');
+      return;
+    }
+    if (productForm.price === '' || Number(productForm.price) <= 0) {
+      alert('Please enter a valid price in ₹ INR');
+      return;
+    }
+    if (!productForm.volume.trim()) {
+      alert('Please enter beverage volume (e.g. 330ml)');
+      return;
+    }
+    if (productForm.calories === '' || Number(productForm.calories) < 0) {
+      alert('Please enter calorie count (e.g. 40)');
+      return;
+    }
+    if (!productForm.category) {
+      alert('Please select a beverage category from the dropdown');
+      return;
+    }
+    if (!productForm.description.trim()) {
+      alert('Please enter a beverage description');
+      return;
+    }
     if (!productForm.image_url) {
-      alert('Please upload an image or choose a preset');
+      alert('Please choose an image file for this beverage');
       return;
     }
 
@@ -185,17 +224,17 @@ export const AdminPage: React.FC = () => {
       setIsEditingProduct(false);
       loadProducts();
       loadOverview();
-      // Reset form
+      // Reset form to blank defaults, leaving total and remaining stock as 50
       setProductForm({
         id: '',
         name: '',
         flavor: '',
-        price: 159,
+        price: '',
         image_url: '',
         description: '',
-        volume: '330ml',
-        calories: 40,
-        category: 'Botanical Sparkler',
+        volume: '',
+        calories: '',
+        category: '',
         total_quantity: 50,
         remaining_quantity: 50,
         active: 1,
@@ -404,12 +443,12 @@ export const AdminPage: React.FC = () => {
                   id: '',
                   name: '',
                   flavor: '',
-                  price: 159,
+                  price: '',
                   image_url: '',
                   description: '',
-                  volume: '330ml',
-                  calories: 40,
-                  category: 'Botanical Sparkler',
+                  volume: '',
+                  calories: '',
+                  category: '',
                   total_quantity: 50,
                   remaining_quantity: 50,
                   active: 1,
@@ -444,7 +483,7 @@ export const AdminPage: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Beverage Name (e.g., Lavender Fizz)
+                    Beverage Name <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -458,7 +497,7 @@ export const AdminPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Flavor Notes
+                    Flavor Notes <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -472,35 +511,39 @@ export const AdminPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Price (₹ INR)
+                    Price (₹ INR) <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="number"
                     min="1"
                     value={productForm.price}
-                    onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })}
+                    onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
                     required
+                    placeholder="e.g. 159"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Volume & Calories
+                    Volume &amp; Calories <span className="text-rose-500">*</span>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       type="text"
                       value={productForm.volume}
                       onChange={(e) => setProductForm({ ...productForm, volume: e.target.value })}
-                      placeholder="330ml"
+                      required
+                      placeholder="e.g. 330ml"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                     />
                     <input
                       type="number"
+                      min="0"
                       value={productForm.calories}
-                      onChange={(e) => setProductForm({ ...productForm, calories: Number(e.target.value) })}
-                      placeholder="Calories"
+                      onChange={(e) => setProductForm({ ...productForm, calories: e.target.value })}
+                      required
+                      placeholder="e.g. 40 kcal"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                     />
                   </div>
@@ -548,20 +591,26 @@ export const AdminPage: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Category
+                  Category <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
+                <select
                   value={productForm.category}
                   onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                  placeholder="e.g. Botanical Sparkler"
+                  required
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
+                >
+                  <option value="" disabled>-- Select Beverage Category --</option>
+                  {BEVERAGE_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Description
+                  Description <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   value={productForm.description}
@@ -577,7 +626,7 @@ export const AdminPage: React.FC = () => {
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 dark:border-slate-700 dark:bg-slate-800/40">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
                   <Upload className="h-4 w-4 text-amber-500" />
-                  <span>Beverage Image: Upload File or Select Preset</span>
+                  <span>Beverage Image: Choose File <span className="text-rose-500">*</span></span>
                 </label>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4">
@@ -598,37 +647,12 @@ export const AdminPage: React.FC = () => {
                       type="file"
                       accept="image/*"
                       onChange={handleImageFileChange}
-                      className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:py-1.5 file:px-3 file:text-xs file:font-semibold file:text-white hover:file:bg-amber-600 cursor-pointer"
+                      required={!productForm.image_url}
+                      className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:py-2 file:px-4 file:text-xs file:font-semibold file:text-white hover:file:bg-amber-600 cursor-pointer"
                     />
-
-                    <div className="text-[11px] text-slate-400">
-                      Or select an artisan preset:
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {[
-                        { label: 'Aurra Sparkle Cranberry', path: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg' },
-                        { label: 'Aurra Mint Mojito', path: '/assets/images/bev_mint_mojito_1793439802738.jpg' },
-                        { label: 'Aurra Mango Rush', path: '/assets/images/bev_mango_rush_1793439803204.jpg' },
-                        { label: 'Aurra Zesty Lime', path: '/assets/images/bev_zesty_lime_1793439823884.jpg' },
-                        { label: 'Aurra Fizz Orange', path: '/assets/images/bev_orange_fizz_1793439826689.jpg' },
-                        { label: 'Aurra Peach Iced Tea', path: '/assets/images/bev_peach_iced_tea_1793439826681.jpg' },
-                        { label: 'Aurra Passionfruit', path: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg' },
-                        { label: 'Aurra Berry Blast', path: '/assets/aistudio/aurra_berry_blast.jpg' },
-                      ].map((preset) => (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          onClick={() => {
-                            setImagePreview(preset.path);
-                            setProductForm((prev) => ({ ...prev, image_url: preset.path }));
-                          }}
-                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Upload your can, bottle, or beverage photo (PNG, JPG, WebP).
+                    </p>
                   </div>
                 </div>
               </div>
