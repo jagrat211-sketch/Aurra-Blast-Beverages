@@ -2,10 +2,15 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 
-// Ensure data directory exists
-const dataDir = path.resolve(process.cwd(), 'data');
+// Ensure data directory exists with Vercel serverless /tmp support
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const dataDir = isVercel ? '/tmp/data' : path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (e) {
+    console.warn('Notice creating data directory:', e);
+  }
 }
 
 const dbPath = path.join(dataDir, 'beverage_store.db');
@@ -148,6 +153,12 @@ export function initDatabase() {
       SET remaining_quantity = total_quantity
       WHERE remaining_quantity IS NULL
     `).run();
+    // Migrate image URLs from /src/assets/images/ to /assets/images/
+    try {
+      db.prepare("UPDATE products SET image_url = REPLACE(image_url, '/src/assets/images/', '/assets/images/') WHERE image_url LIKE '/src/assets/images/%'").run();
+    } catch (migErr) {
+      console.warn('Image URL migration notice:', migErr);
+    }
   } catch (err) {
     console.warn('Product table inventory migration warning:', err);
   }
@@ -159,13 +170,13 @@ export function initDatabase() {
   } else {
     // Ensure all 8 menu drinks have the exact requested Aurra names and are active
     const syncDrinks = [
-      { id: 'prod-cranberry-sparkle', name: 'Aurra Sparkle Cranberry', flavor: 'Tart Cranberry & Wild Botanicals', price: 149, volume: '330ml', calories: 42 },
-      { id: 'prod-mint-mojito', name: 'Aurra Mint Mojito', flavor: 'Fresh Garden Spearmint & Persian Lime', price: 159, volume: '330ml', calories: 38 },
-      { id: 'prod-zesty-lime', name: 'Aurra Zesty Lime', flavor: 'Crisp Citrus & Himalayan Sea Salt', price: 139, volume: '330ml', calories: 32 },
-      { id: 'prod-mango-rush', name: 'Aurra Mango Rush', flavor: 'Ratnagiri Alphonso & Sunlit Citrus', price: 169, volume: '330ml', calories: 54 },
-      { id: 'prod-orange-fizz', name: 'Aurra Fizz Orange', flavor: 'Nagpur Mandarin & Valencia Orange', price: 149, volume: '330ml', calories: 48 },
-      { id: 'prod-peach-iced-tea', name: 'Aurra Peach Iced Tea', flavor: 'Darjeeling Black Tea & Ripe Golden Peach', price: 159, volume: '355ml', calories: 40 },
-      { id: 'prod-passionfruit-fizz', name: 'Aurra Passionfruit', flavor: 'Tropical Passionfruit & Wild Citrus', price: 169, volume: '330ml', calories: 44 },
+      { id: 'prod-cranberry-sparkle', name: 'Aurra Sparkle Cranberry', flavor: 'Tart Cranberry & Wild Botanicals', price: 149, volume: '330ml', calories: 42, image_url: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg' },
+      { id: 'prod-mint-mojito', name: 'Aurra Mint Mojito', flavor: 'Fresh Garden Spearmint & Persian Lime', price: 159, volume: '330ml', calories: 38, image_url: '/assets/images/bev_mint_mojito_1793439802738.jpg' },
+      { id: 'prod-zesty-lime', name: 'Aurra Zesty Lime', flavor: 'Crisp Citrus & Himalayan Sea Salt', price: 139, volume: '330ml', calories: 32, image_url: '/assets/images/bev_zesty_lime_1793439823884.jpg' },
+      { id: 'prod-mango-rush', name: 'Aurra Mango Rush', flavor: 'Ratnagiri Alphonso & Sunlit Citrus', price: 169, volume: '330ml', calories: 54, image_url: '/assets/images/bev_mango_rush_1793439803204.jpg' },
+      { id: 'prod-orange-fizz', name: 'Aurra Fizz Orange', flavor: 'Nagpur Mandarin & Valencia Orange', price: 149, volume: '330ml', calories: 48, image_url: '/assets/images/bev_orange_fizz_1793439826689.jpg' },
+      { id: 'prod-peach-iced-tea', name: 'Aurra Peach Iced Tea', flavor: 'Darjeeling Black Tea & Ripe Golden Peach', price: 159, volume: '355ml', calories: 40, image_url: '/assets/images/bev_peach_iced_tea_1793439826681.jpg' },
+      { id: 'prod-passionfruit-fizz', name: 'Aurra Passionfruit', flavor: 'Tropical Passionfruit & Wild Citrus', price: 169, volume: '330ml', calories: 44, image_url: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg' },
       {
         id: 'prod-berry-blast',
         name: 'Aurra Berry Blast',
@@ -183,8 +194,8 @@ export function initDatabase() {
       const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(item.id);
       if (existing) {
         if (item.image_url) {
-          db.prepare('UPDATE products SET name = ?, flavor = ?, price = ?, image_url = ?, description = ?, volume = ?, calories = ?, active = 1 WHERE id = ?')
-            .run(item.name, item.flavor, item.price, item.image_url, item.description, item.volume, item.calories, item.id);
+          db.prepare('UPDATE products SET name = ?, flavor = ?, price = ?, image_url = ?, description = COALESCE(description, ?), volume = ?, calories = ?, active = 1 WHERE id = ?')
+            .run(item.name, item.flavor, item.price, item.image_url, item.description || '', item.volume, item.calories, item.id);
         } else {
           db.prepare('UPDATE products SET name = ?, active = 1 WHERE id = ?').run(item.name, item.id);
         }
@@ -220,7 +231,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Sparkle Cranberry',
       flavor: 'Tart Cranberry & Wild Botanicals',
       price: 149,
-      image_url: '/src/assets/images/bev_cranberry_sparkle_1793439801856.jpg',
+      image_url: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg',
       description: 'Hand-picked crisp cranberries blended with mountain spring effervescence and floral botanical notes.',
       volume: '330ml',
       calories: 42,
@@ -230,7 +241,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Mint Mojito',
       flavor: 'Fresh Garden Spearmint & Persian Lime',
       price: 159,
-      image_url: '/src/assets/images/bev_mint_mojito_1793439802738.jpg',
+      image_url: '/assets/images/bev_mint_mojito_1793439802738.jpg',
       description: 'Muddled spearmint leaves paired with zesty cold-pressed lime and fine effervescent bubbles.',
       volume: '330ml',
       calories: 38,
@@ -240,7 +251,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Zesty Lime',
       flavor: 'Crisp Citrus & Himalayan Sea Salt',
       price: 139,
-      image_url: '/src/assets/images/bev_zesty_lime_1793439823884.jpg',
+      image_url: '/assets/images/bev_zesty_lime_1793439823884.jpg',
       description: 'Cold-pressed key limes with a subtle pinch of mineral salt for maximum crisp refreshment.',
       volume: '330ml',
       calories: 32,
@@ -250,7 +261,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Mango Rush',
       flavor: 'Ratnagiri Alphonso & Sunlit Citrus',
       price: 169,
-      image_url: '/src/assets/images/bev_mango_rush_1793439803204.jpg',
+      image_url: '/assets/images/bev_mango_rush_1793439803204.jpg',
       description: 'Pure sun-ripened Alphonso mango puree kissed with sparkling carbonation and subtle cardamom finish.',
       volume: '330ml',
       calories: 54,
@@ -260,7 +271,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Fizz Orange',
       flavor: 'Nagpur Mandarin & Valencia Orange',
       price: 149,
-      image_url: '/src/assets/images/bev_orange_fizz_1793439826689.jpg',
+      image_url: '/assets/images/bev_orange_fizz_1793439826689.jpg',
       description: 'Juicy burst of fresh-squeezed sunburst oranges with sparkling micro-bubbles and orange blossom essence.',
       volume: '330ml',
       calories: 48,
@@ -270,7 +281,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Peach Iced Tea',
       flavor: 'Darjeeling Black Tea & Ripe Golden Peach',
       price: 159,
-      image_url: '/src/assets/images/bev_peach_iced_tea_1793439826681.jpg',
+      image_url: '/assets/images/bev_peach_iced_tea_1793439826681.jpg',
       description: 'Single-estate Darjeeling black tea slow-brewed with golden orchard peach slices and organic mint.',
       volume: '355ml',
       calories: 40,
@@ -280,7 +291,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Passionfruit',
       flavor: 'Tropical Passionfruit & Wild Citrus',
       price: 169,
-      image_url: '/src/assets/images/bev_passionfruit_fizz_1793441269499.jpg',
+      image_url: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg',
       description: 'Lush golden passionfruit pulp gently carbonated with floral citrus blossom notes for a tropical burst.',
       volume: '330ml',
       calories: 44,
@@ -290,7 +301,7 @@ export function seedDefaultProducts() {
       name: 'Aurra Berry Blast',
       flavor: 'Wild Blackberry, Blueberry & Acai',
       price: 179,
-      image_url: '/assets/aistudio/image_1e6dd58f.png',
+      image_url: '/assets/aistudio/aurra_berry_blast.jpg',
       description: 'A rich anthocyanin-packed blend of deep wild forest berries, dark grape skin, and fizzy spring water.',
       volume: '330ml',
       calories: 46,

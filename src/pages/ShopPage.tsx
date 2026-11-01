@@ -243,19 +243,21 @@ export const ShopPage: React.FC = () => {
                   {/* Beverage Image Frame */}
                   <div className="relative aspect-4/3 w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <img
-                      src={product.image_url}
+                      src={
+                        product.image_url?.startsWith('/src/assets/images/')
+                          ? product.image_url.replace('/src/assets/images/', '/assets/images/')
+                          : (product.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg')
+                      }
                       alt={product.name}
                       referrerPolicy="no-referrer"
                       className={`h-full w-full object-cover object-center transition-transform duration-300 ${
                         isOutOfStock ? 'grayscale contrast-75' : 'group-hover:scale-105'
                       }`}
                       onError={(e) => {
-                        const el = e.target as HTMLElement;
-                        el.style.display = 'none';
-                        const parent = el.parentElement;
-                        if (parent) {
-                          parent.classList.add('flex', 'items-center', 'justify-center', 'bg-slate-50', 'dark:bg-slate-800');
-                          parent.innerHTML = `<span class="text-xs font-bold text-slate-700 dark:text-slate-300">${product.name}</span>`;
+                        const img = e.currentTarget as HTMLImageElement;
+                        if (!img.dataset.hasFallenBack) {
+                          img.dataset.hasFallenBack = 'true';
+                          img.src = '/assets/images/hero_beverage_can_1793439801479.jpg';
                         }
                       }}
                     />

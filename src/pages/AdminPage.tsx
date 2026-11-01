@@ -607,13 +607,14 @@ export const AdminPage: React.FC = () => {
 
                     <div className="flex flex-wrap gap-1.5">
                       {[
-                        { label: 'Aurra Sparkle Cranberry', path: '/src/assets/images/bev_cranberry_sparkle_1793439801856.jpg' },
-                        { label: 'Aurra Mint Mojito', path: '/src/assets/images/bev_mint_mojito_1793439802738.jpg' },
-                        { label: 'Aurra Mango Rush', path: '/src/assets/images/bev_mango_rush_1793439803204.jpg' },
-                        { label: 'Aurra Zesty Lime', path: '/src/assets/images/bev_zesty_lime_1793439823884.jpg' },
-                        { label: 'Aurra Fizz Orange', path: '/src/assets/images/bev_orange_fizz_1793439826689.jpg' },
-                        { label: 'Aurra Peach Iced Tea', path: '/src/assets/images/bev_peach_iced_tea_1793439826681.jpg' },
-                        { label: 'Aurra Passionfruit', path: '/src/assets/images/bev_passionfruit_fizz_1793441269499.jpg' },
+                        { label: 'Aurra Sparkle Cranberry', path: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg' },
+                        { label: 'Aurra Mint Mojito', path: '/assets/images/bev_mint_mojito_1793439802738.jpg' },
+                        { label: 'Aurra Mango Rush', path: '/assets/images/bev_mango_rush_1793439803204.jpg' },
+                        { label: 'Aurra Zesty Lime', path: '/assets/images/bev_zesty_lime_1793439823884.jpg' },
+                        { label: 'Aurra Fizz Orange', path: '/assets/images/bev_orange_fizz_1793439826689.jpg' },
+                        { label: 'Aurra Peach Iced Tea', path: '/assets/images/bev_peach_iced_tea_1793439826681.jpg' },
+                        { label: 'Aurra Passionfruit', path: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg' },
+                        { label: 'Aurra Berry Blast', path: '/assets/aistudio/aurra_berry_blast.jpg' },
                       ].map((preset) => (
                         <button
                           key={preset.label}

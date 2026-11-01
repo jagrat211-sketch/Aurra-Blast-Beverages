@@ -106,7 +106,7 @@ export const OrdersPage: React.FC = () => {
             name: item.name_snapshot,
             flavor: 'Botanical Sparkler',
             price: item.price_snapshot,
-            image_url: '/src/assets/images/hero_beverage_can_1793439801479.jpg',
+            image_url: '/assets/images/hero_beverage_can_1793439801479.jpg',
             description: item.name_snapshot,
             volume: '330ml',
             calories: 40,
