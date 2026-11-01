@@ -9,7 +9,26 @@ export interface SupabaseUserRow {
   email: string;
   password?: string;
   role: 'user' | 'admin' | string;
+  delivery_address?: string;
+  avatar_url?: string;
   created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupabaseProductRow {
+  id?: number | string;
+  beverage_name: string;
+  description?: string;
+  price: number;
+  category?: string;
+  total_quantity: number;
+  remaining_quantity: number;
+  volume?: string;
+  flavor_notes?: string;
+  calories?: number;
+  image_url?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

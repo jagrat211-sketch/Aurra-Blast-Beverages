@@ -7,12 +7,13 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; user?: User; requiresVerification?: boolean; email?: string; devVerificationCode?: string }>;
-  signup: (name: string, email: string, password: string) => Promise<{ success?: boolean; user?: User; requiresVerification?: boolean; email?: string; message: string; devVerificationCode?: string }>;
+  signup: (name: string, email: string, password: string) => Promise<{ success?: boolean; user?: User; requiresVerification?: boolean; email?: string; message: string; devVerificationCode?: string; redirectTo?: string }>;
   verifyEmail: (email: string, code: string) => Promise<{ success: boolean; user: User }>;
   resendCode: (email: string) => Promise<{ success: boolean; devVerificationCode?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   updateProfile: (name: string) => Promise<{ success: boolean; user: User }>;
+  updateAddress: (address: string) => Promise<{ success: boolean; user: User; message: string }>;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; user: User }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; user: User }>;
@@ -51,12 +52,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
+  // FLOW FIX: After successful signup, user is NOT automatically logged in.
+  // Instead, redirected to login page to manually enter credentials.
   const signup = async (name: string, email: string, password: string) => {
     const res = await api.signup({ name, email, password });
-    if (res.user) {
-      setUser(res.user);
-      setCartUser(res.user);
-    }
+    // Do NOT set user session here!
     return res;
   };
 
@@ -86,6 +86,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateProfile = async (name: string) => {
     const res = await api.updateProfile({ name });
+    if (res.user) {
+      setUser(res.user);
+      setCartUser(res.user);
+    }
+    return res;
+  };
+
+  const updateAddress = async (address: string) => {
+    const res = await api.updateAddress({ address });
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
@@ -127,6 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         refreshUser: fetchCurrentUser,
         updateProfile,
+        updateAddress,
         adminLogin,
         changePassword,
         updateAvatar,

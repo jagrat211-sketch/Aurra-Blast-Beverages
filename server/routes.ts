@@ -50,13 +50,19 @@ const createOrderSchema = z.object({
 });
 
 const productSchema = z.object({
+  id: z.string().optional(),
   name: z.string().trim().min(2),
+  beverage_name: z.string().trim().optional(),
   flavor: z.string().trim().min(2),
-  price: z.number().int().positive('Price must be greater than 0'),
-  image_url: z.string().min(1),
+  flavor_notes: z.string().trim().optional(),
+  price: z.number().positive('Price must be greater than 0'),
+  image_url: z.string().min(1, 'Image is required'),
   description: z.string().trim().min(5),
   volume: z.string().trim().default('330ml'),
   calories: z.number().int().nonnegative().default(40),
+  category: z.string().trim().default('Botanical Sparkler'),
+  total_quantity: z.number().int().nonnegative().default(50),
+  remaining_quantity: z.number().int().nonnegative().optional(),
   active: z.number().int().min(0).max(1).default(1),
 });
 
@@ -69,7 +75,8 @@ function generateId(prefix: string = 'id'): string {
 // AUTH ROUTES
 // -------------------------------------------------------------
 
-// POST /api/auth/signup - Integrates Supabase users table (id, name, email, password, role: 'user', created_at)
+// POST /api/auth/signup - Integrates Supabase users table (name, email, hashed password, role: 'user', created_at)
+// NOTE: Does NOT log the user in automatically. Directs user to sign-in page to enter credentials.
 router.post('/auth/signup', async (req: Request, res: Response) => {
   try {
     const parse = signupSchema.safeParse(req.body);
@@ -89,7 +96,7 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
         .maybeSingle();
 
       if (existingSbUser) {
-        return res.status(400).json({ error: 'Email already registered. Please log in.' });
+        return res.status(400).json({ error: 'Email already registered. Please sign in.' });
       }
     } catch (checkErr) {
       console.warn('Supabase check existing user warning:', checkErr);
@@ -98,7 +105,7 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
     // Also check local SQLite
     const existingLocal = db.prepare('SELECT id, email FROM users WHERE email = ?').get(cleanEmail) as { id: string; email: string } | undefined;
     if (existingLocal) {
-      return res.status(400).json({ error: 'Email already registered. Please log in.' });
+      return res.status(400).json({ error: 'Email already registered. Please sign in.' });
     }
 
     // 2. Hash password with bcrypt
@@ -106,7 +113,7 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
     const createdAt = new Date().toISOString();
     let userId = generateId('usr');
 
-    // 3. Insert into Supabase users table with role explicitly set to 'user'
+    // 3. Insert into Supabase users table with default role as 'user' and created_at captured
     try {
       const { data: insertedData, error: sbInsertError } = await supabase
         .from('users')
@@ -135,23 +142,14 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
       VALUES (?, ?, ?, ?, 'user', 1, ?)
     `).run(userId, name, cleanEmail, hashedPassword, createdAt);
 
-    const authUser = {
-      id: userId,
-      name,
-      email: cleanEmail,
-      role: 'user' as const,
-      email_verified: 1,
-      created_at: createdAt,
-    };
-
-    // Auto log-in with JWT token & cookie
-    const token = signToken(authUser);
-    setAuthCookie(res, token);
-
+    // FLOW REQUIREMENT:
+    // Do NOT log the user in automatically after sign-up.
+    // Return success message so frontend redirects user to Sign-In page to manually enter credentials.
     return res.status(201).json({
       success: true,
-      user: authUser,
-      message: 'Account created successfully! Welcome to Aurra Blast Beverages.',
+      message: 'Account created successfully! Please sign in with your email and password.',
+      email: cleanEmail,
+      redirectTo: '/auth',
     });
   } catch (err: any) {
     console.error('Signup error:', err);
@@ -309,9 +307,10 @@ router.post('/auth/login', async (req: Request, res: Response) => {
         .eq('email', cleanEmail)
         .maybeSingle();
 
-      if (sbUser && sbUser.password) {
+      const storedPasswordHash = sbUser?.password || sbUser?.password_hash;
+      if (sbUser && storedPasswordHash) {
         // Compare password using bcrypt
-        const isMatch = await comparePassword(password, sbUser.password);
+        const isMatch = await comparePassword(password, storedPasswordHash);
         if (isMatch) {
           // Check role from Supabase column ('admin' or 'user')
           const assignedRole = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
@@ -323,14 +322,29 @@ router.post('/auth/login', async (req: Request, res: Response) => {
             role: assignedRole,
             email_verified: 1,
             created_at: sbUser.created_at || new Date().toISOString(),
+            updated_at: sbUser.updated_at || null,
+            delivery_address: sbUser.delivery_address || null,
+            avatar_url: sbUser.avatar_url || null,
+            parent_id: sbUser.parent_id || 'AURRA-DIST-IND-01',
           };
 
           // Synchronize with local SQLite so relational foreign keys (cart events, orders) work smoothly
           try {
             db.prepare(`
-              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at)
-              VALUES (?, ?, ?, ?, ?, 1, ?)
-            `).run(authUser.id, authUser.name, authUser.email, sbUser.password, assignedRole, authUser.created_at);
+              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, avatar_url, parent_id)
+              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            `).run(
+              authUser.id,
+              authUser.name,
+              authUser.email,
+              storedPasswordHash,
+              assignedRole,
+              authUser.created_at,
+              authUser.updated_at,
+              authUser.delivery_address,
+              authUser.avatar_url,
+              authUser.parent_id
+            );
           } catch (syncErr) {
             console.warn('Sync user to SQLite warning:', syncErr);
           }
@@ -347,7 +361,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     }
 
     // 3. Fallback: Check local SQLite database
-    const localUser = db.prepare('SELECT id, name, email, password_hash, role, email_verified FROM users WHERE email = ?').get(cleanEmail) as any;
+    const localUser = db.prepare('SELECT id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, avatar_url, parent_id FROM users WHERE email = ?').get(cleanEmail) as any;
     if (localUser) {
       const validPassword = await comparePassword(password, localUser.password_hash);
       if (validPassword) {
@@ -358,6 +372,11 @@ router.post('/auth/login', async (req: Request, res: Response) => {
           email: localUser.email,
           role: assignedRole,
           email_verified: 1,
+          created_at: localUser.created_at,
+          updated_at: localUser.updated_at || null,
+          delivery_address: localUser.delivery_address || null,
+          avatar_url: localUser.avatar_url || null,
+          parent_id: localUser.parent_id || 'AURRA-DIST-IND-01',
         };
         const token = signToken(authUser);
         setAuthCookie(res, token);
@@ -380,7 +399,7 @@ router.post('/auth/logout', (_req: Request, res: Response) => {
 
 // GET /api/auth/me
 router.get('/auth/me', requireAuth, (req: Request, res: Response) => {
-  const user = db.prepare('SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE id = ?').get(req.user!.id) as any;
+  const user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id) as any;
   if (!user) {
     return res.json({ user: req.user });
   }
@@ -392,7 +411,9 @@ router.get('/auth/me', requireAuth, (req: Request, res: Response) => {
       role: user.role,
       email_verified: user.email_verified,
       created_at: user.created_at,
+      updated_at: user.updated_at || null,
       avatar_url: user.avatar_url || null,
+      delivery_address: user.delivery_address || null,
       parent_id: user.parent_id || 'AURRA-DIST-IND-01',
     },
   });
@@ -523,8 +544,8 @@ router.put('/auth/change-password', requireAuth, async (req: Request, res: Respo
       return res.status(400).json({ error: 'New password must be at least 8 characters long' });
     }
 
-    const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.user!.id) as
-      | { id: string; password_hash: string }
+    const user = db.prepare('SELECT id, email, password_hash FROM users WHERE id = ?').get(req.user!.id) as
+      | { id: string; email: string; password_hash: string }
       | undefined;
 
     if (!user) {
@@ -537,7 +558,20 @@ router.put('/auth/change-password', requireAuth, async (req: Request, res: Respo
     }
 
     const newHash = await hashPassword(newPassword);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
+    const now = new Date().toISOString();
+
+    // 1. Update SQLite
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(newHash, now, user.id);
+
+    // 2. Update Supabase users table (capturing updated_at; created_at remains unchanged)
+    try {
+      await supabase
+        .from('users')
+        .update({ password: newHash, updated_at: now })
+        .eq('email', user.email);
+    } catch (sbErr) {
+      console.warn('Supabase password update error:', sbErr);
+    }
 
     return res.json({
       success: true,
@@ -550,15 +584,29 @@ router.put('/auth/change-password', requireAuth, async (req: Request, res: Respo
 });
 
 // POST /api/auth/avatar
-router.post('/auth/avatar', requireAuth, (req: Request, res: Response) => {
+router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => {
   try {
     const { avatarUrl } = req.body || {};
     if (!avatarUrl || typeof avatarUrl !== 'string') {
       return res.status(400).json({ error: 'Avatar image URL or data is required' });
     }
 
-    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, req.user!.id);
-    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE id = ?').get(req.user!.id);
+    const now = new Date().toISOString();
+
+    // 1. Update SQLite
+    db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?').run(avatarUrl, now, req.user!.id);
+
+    // 2. Update Supabase users table (capturing updated_at)
+    try {
+      await supabase
+        .from('users')
+        .update({ avatar_url: avatarUrl, updated_at: now })
+        .eq('email', req.user!.email);
+    } catch (sbErr) {
+      console.warn('Supabase avatar update error:', sbErr);
+    }
+
+    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
 
     return res.json({
       success: true,
@@ -575,9 +623,30 @@ router.post('/auth/avatar', requireAuth, (req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 // GET /api/products
-router.get('/products', (_req: Request, res: Response) => {
+router.get('/products', async (_req: Request, res: Response) => {
   try {
-    const products = db.prepare('SELECT * FROM products WHERE active = 1 ORDER BY created_at ASC').all();
+    const products = db.prepare('SELECT * FROM products WHERE active = 1 ORDER BY created_at ASC').all() as any[];
+
+    // Attempt to merge real-time inventory from Supabase products table if exists
+    try {
+      const { data: sbProds } = await supabase.from('products').select('*');
+      if (sbProds && sbProds.length > 0) {
+        for (const sbP of sbProds) {
+          const match = products.find(
+            (p) => p.name === sbP.beverage_name || p.id === String(sbP.id) || p.beverage_name === sbP.beverage_name
+          );
+          if (match && typeof sbP.remaining_quantity === 'number') {
+            match.remaining_quantity = sbP.remaining_quantity;
+            if (typeof sbP.total_quantity === 'number') {
+              match.total_quantity = sbP.total_quantity;
+            }
+          }
+        }
+      }
+    } catch {
+      // Use local SQLite values
+    }
+
     return res.json({ products });
   } catch (err) {
     console.error('Fetch products error:', err);
@@ -585,30 +654,102 @@ router.get('/products', (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/products (Admin only: create new beverage or update)
-router.post('/products', requireAuth, requireAdmin, (req: Request, res: Response) => {
+// POST /api/products (Admin only: create new beverage or update with stock tracking)
+router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const parse = productSchema.safeParse(req.body);
     if (!parse.success) {
       return res.status(400).json({ error: parse.error.issues[0]?.message || 'Invalid product data' });
     }
 
-    const { name, flavor, price, image_url, description, volume, calories, active } = parse.data;
-    const id = req.body.id || generateId('prod');
-    const createdAt = new Date().toISOString();
+    const {
+      name,
+      beverage_name,
+      flavor,
+      flavor_notes,
+      price,
+      image_url,
+      description,
+      volume,
+      calories,
+      category,
+      total_quantity,
+      remaining_quantity,
+      active,
+    } = parse.data;
 
-    const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+    const bevName = (beverage_name || name).trim();
+    const flavNotes = (flavor_notes || flavor).trim();
+    const cat = (category || 'Botanical Sparkler').trim();
+    const totalQty = typeof total_quantity === 'number' ? total_quantity : 50;
+    const now = new Date().toISOString();
+    const id = req.body.id || generateId('prod');
+
+    const existing = db.prepare('SELECT id, created_at, remaining_quantity FROM products WHERE id = ?').get(id) as any;
+
     if (existing) {
+      // EDIT: updated_at captures date and time; created_at remains unchanged!
+      const remainQty = typeof remaining_quantity === 'number'
+        ? remaining_quantity
+        : (typeof existing.remaining_quantity === 'number' ? existing.remaining_quantity : totalQty);
+
       db.prepare(`
         UPDATE products
-        SET name = ?, flavor = ?, price = ?, image_url = ?, description = ?, volume = ?, calories = ?, active = ?
+        SET name = ?, beverage_name = ?, flavor = ?, flavor_notes = ?, price = ?, image_url = ?, description = ?,
+            volume = ?, calories = ?, category = ?, total_quantity = ?, remaining_quantity = ?, active = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, flavor, price, image_url, description, volume, calories, active, id);
+      `).run(bevName, bevName, flavNotes, flavNotes, price, image_url, description, volume, calories, cat, totalQty, remainQty, active, now, id);
+
+      // Update in Supabase products table
+      try {
+        await supabase
+          .from('products')
+          .update({
+            beverage_name: bevName,
+            flavor_notes: flavNotes,
+            description,
+            price,
+            category: cat,
+            total_quantity: totalQty,
+            remaining_quantity: remainQty,
+            volume,
+            calories,
+            image_url,
+            updated_at: now,
+          })
+          .or(`beverage_name.eq.${bevName},id.eq.${id}`);
+      } catch (sbErr) {
+        console.warn('Supabase product update warning (RLS/policy):', sbErr);
+      }
     } else {
+      // ADD: created_at captures date and time; remaining_quantity defaults to total_quantity
+      const remainQty = typeof remaining_quantity === 'number' ? remaining_quantity : totalQty;
+
       db.prepare(`
-        INSERT INTO products (id, name, flavor, price, image_url, description, volume, calories, active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, name, flavor, price, image_url, description, volume, calories, active, createdAt);
+        INSERT INTO products (id, name, beverage_name, flavor, flavor_notes, price, image_url, description, volume, calories, category, total_quantity, remaining_quantity, active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, bevName, bevName, flavNotes, flavNotes, price, image_url, description, volume, calories, cat, totalQty, remainQty, active, now);
+
+      // Insert into Supabase products table
+      try {
+        await supabase
+          .from('products')
+          .insert({
+            beverage_name: bevName,
+            flavor_notes: flavNotes,
+            description,
+            price,
+            category: cat,
+            total_quantity: totalQty,
+            remaining_quantity: remainQty,
+            volume,
+            calories,
+            image_url,
+            created_at: now,
+          });
+      } catch (sbErr) {
+        console.warn('Supabase product insert warning (RLS/policy):', sbErr);
+      }
     }
 
     const saved = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
@@ -770,8 +911,8 @@ router.post('/cart/events', requireAuth, (req: Request, res: Response) => {
 // ORDERS ROUTES
 // -------------------------------------------------------------
 
-// POST /api/orders (Creates order inside one transaction; server computes all prices)
-router.post('/orders', requireAuth, (req: Request, res: Response) => {
+// POST /api/orders (Creates order and deducts inventory from remaining_quantity in SQLite & Supabase)
+router.post('/orders', requireAuth, async (req: Request, res: Response) => {
   try {
     const parse = createOrderSchema.safeParse(req.body);
     if (!parse.success) {
@@ -783,8 +924,8 @@ router.post('/orders', requireAuth, (req: Request, res: Response) => {
     const orderId = generateId('ord');
     const now = new Date().toISOString();
 
-    // Look up real prices from products table
-    const productStmt = db.prepare('SELECT id, name, price, active FROM products WHERE id = ?');
+    // Look up real prices and live stock from products table
+    const productStmt = db.prepare('SELECT id, name, beverage_name, price, active, total_quantity, remaining_quantity FROM products WHERE id = ?');
 
     let serverTotal = 0;
     const resolvedItems: {
@@ -792,11 +933,12 @@ router.post('/orders', requireAuth, (req: Request, res: Response) => {
       name: string;
       price: number;
       qty: number;
+      newRemaining: number;
     }[] = [];
 
     for (const item of items) {
       const product = productStmt.get(item.productId) as
-        | { id: string; name: string; price: number; active: number }
+        | { id: string; name: string; beverage_name?: string; price: number; active: number; total_quantity: number; remaining_quantity: number }
         | undefined;
 
       if (!product) {
@@ -807,16 +949,33 @@ router.post('/orders', requireAuth, (req: Request, res: Response) => {
         return res.status(400).json({ error: `Product '${product.name}' is currently unavailable.` });
       }
 
+      const prodDisplayName = product.beverage_name || product.name;
+      const currentStock = typeof product.remaining_quantity === 'number' ? product.remaining_quantity : 50;
+
+      // Backend stock validation safety check
+      if (currentStock <= 0) {
+        return res.status(400).json({ error: `Sorry, "${prodDisplayName}" is out of stock.` });
+      }
+
+      if (currentStock < item.qty) {
+        return res.status(400).json({
+          error: `Only ${currentStock} cans of "${prodDisplayName}" remaining in stock. Please adjust your quantity.`,
+        });
+      }
+
+      const newRemaining = Math.max(0, currentStock - item.qty);
+
       serverTotal += product.price * item.qty;
       resolvedItems.push({
         productId: product.id,
-        name: product.name,
+        name: prodDisplayName,
         price: product.price,
         qty: item.qty,
+        newRemaining,
       });
     }
 
-    // Execute order creation in a single transaction
+    // Execute order creation and stock deduction inside a single transaction
     const createOrderTransaction = db.transaction(() => {
       // 1. Insert order
       db.prepare(`
@@ -830,13 +989,36 @@ router.post('/orders', requireAuth, (req: Request, res: Response) => {
         VALUES (?, ?, ?, ?, ?, ?)
       `);
 
+      // 3. Deduct stock from SQLite products table
+      const deductStockStmt = db.prepare(`
+        UPDATE products
+        SET remaining_quantity = ?, updated_at = ?
+        WHERE id = ?
+      `);
+
       for (const item of resolvedItems) {
         const itemId = generateId('oit');
         itemStmt.run(itemId, orderId, item.productId, item.name, item.price, item.qty);
+        deductStockStmt.run(item.newRemaining, now, item.productId);
       }
     });
 
     createOrderTransaction();
+
+    // Deduct stock in Supabase products table asynchronously
+    for (const item of resolvedItems) {
+      try {
+        await supabase
+          .from('products')
+          .update({
+            remaining_quantity: item.newRemaining,
+            updated_at: now,
+          })
+          .or(`beverage_name.eq.${item.name},id.eq.${item.productId}`);
+      } catch (sbErr) {
+        console.warn('Supabase product stock deduction note (RLS/policy):', sbErr);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -909,18 +1091,85 @@ router.patch('/orders/:id/status', requireAuth, (req: Request, res: Response) =>
   }
 });
 
-// PUT /api/auth/profile
-router.put('/auth/profile', requireAuth, (req: Request, res: Response) => {
+// PUT /api/auth/profile (Captures updated_at; updates Supabase and SQLite)
+router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { name } = req.body;
-    if (!name || typeof name !== 'string' || name.trim().length < 2) {
+    const { name, delivery_address, deliveryAddress } = req.body;
+    const finalAddress = (delivery_address || deliveryAddress || '').toString().trim();
+    const cleanName = name ? String(name).trim() : req.user!.name;
+    const now = new Date().toISOString();
+
+    if (name && cleanName.length < 2) {
       return res.status(400).json({ error: 'Name must be at least 2 characters long' });
     }
-    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name.trim(), req.user!.id);
-    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at FROM users WHERE id = ?').get(req.user!.id);
+
+    db.prepare(`
+      UPDATE users
+      SET name = ?, delivery_address = CASE WHEN ? != '' THEN ? ELSE delivery_address END, updated_at = ?
+      WHERE id = ?
+    `).run(cleanName, finalAddress, finalAddress, now, req.user!.id);
+
+    try {
+      const updateData: any = { name: cleanName, updated_at: now };
+      if (finalAddress) {
+        updateData.delivery_address = finalAddress;
+      }
+      await supabase
+        .from('users')
+        .update(updateData)
+        .eq('email', req.user!.email);
+    } catch (sbErr) {
+      console.warn('Supabase profile update warning:', sbErr);
+    }
+
+    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
     return res.json({ success: true, user: updated });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// PUT /api/auth/address (Saves delivery address and updates updated_at in Supabase and SQLite)
+router.put('/auth/address', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { address, deliveryAddress } = req.body || {};
+    const finalAddress = (address || deliveryAddress || '').toString().trim();
+
+    if (!finalAddress || finalAddress.length < 5) {
+      return res.status(400).json({ error: 'Please enter a complete delivery address (minimum 5 characters).' });
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Update SQLite
+    db.prepare(`
+      UPDATE users
+      SET delivery_address = ?, updated_at = ?
+      WHERE id = ?
+    `).run(finalAddress, now, req.user!.id);
+
+    // 2. Update Supabase users table (created_at remains intact; updated_at captures change)
+    try {
+      await supabase
+        .from('users')
+        .update({
+          delivery_address: finalAddress,
+          updated_at: now,
+        })
+        .eq('email', req.user!.email);
+    } catch (sbErr) {
+      console.warn('Supabase address update warning (RLS/policy):', sbErr);
+    }
+
+    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
+    return res.json({
+      success: true,
+      message: 'Delivery address saved successfully!',
+      user: updated,
+    });
+  } catch (err) {
+    console.error('Update delivery address error:', err);
+    return res.status(500).json({ error: 'Failed to save delivery address' });
   }
 });
 

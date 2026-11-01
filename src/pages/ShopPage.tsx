@@ -12,7 +12,8 @@ import {
   Upload,
   Compass,
   Zap,
-  Leaf
+  Leaf,
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCartStore } from '../store/useCartStore';
@@ -63,8 +64,13 @@ export const ShopPage: React.FC = () => {
     fetchProducts();
   }, []);
 
-  // Handle Buy / Add to Cart: Prompts login modal if unauthenticated
+  // Handle Buy / Add to Cart: Prompts login modal if unauthenticated or blocks if out of stock
   const handleBuyClick = (product: Product) => {
+    const remaining = product.remaining_quantity !== undefined ? product.remaining_quantity : (product.total_quantity !== undefined ? product.total_quantity : 50);
+    if (remaining <= 0) {
+      return;
+    }
+
     if (!user) {
       setPendingProductToBuy(product);
       setIsAuthModalOpen(true);
@@ -82,8 +88,11 @@ export const ShopPage: React.FC = () => {
 
   const handleAuthSuccess = (productToAdd?: Product | null) => {
     if (productToAdd) {
-      addItem(productToAdd, 1);
-      openCart();
+      const remaining = productToAdd.remaining_quantity !== undefined ? productToAdd.remaining_quantity : (productToAdd.total_quantity !== undefined ? productToAdd.total_quantity : 50);
+      if (remaining > 0) {
+        addItem(productToAdd, 1);
+        openCart();
+      }
       setPendingProductToBuy(null);
     }
   };
@@ -219,10 +228,17 @@ export const ShopPage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {products.map((product) => {
               const isAdded = addedAnimationId === product.id;
+              const remaining = product.remaining_quantity !== undefined ? product.remaining_quantity : (product.total_quantity !== undefined ? product.total_quantity : 50);
+              const isOutOfStock = remaining <= 0;
+
               return (
                 <div
                   key={product.id}
-                  className="group relative flex flex-col justify-between overflow-hidden rounded-3xl border border-slate-200/80 bg-white transition-all duration-200 hover:-translate-y-1 hover:shadow-xl dark:border-slate-800/80 dark:bg-slate-900"
+                  className={`group relative flex flex-col justify-between overflow-hidden rounded-3xl border transition-all duration-200 ${
+                    isOutOfStock
+                      ? 'border-slate-200/60 bg-slate-50/60 opacity-90 dark:border-slate-800/60 dark:bg-slate-900/60'
+                      : 'border-slate-200/80 bg-white hover:-translate-y-1 hover:shadow-xl dark:border-slate-800/80 dark:bg-slate-900'
+                  }`}
                 >
                   {/* Beverage Image Frame */}
                   <div className="relative aspect-4/3 w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
@@ -230,7 +246,9 @@ export const ShopPage: React.FC = () => {
                       src={product.image_url}
                       alt={product.name}
                       referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
+                      className={`h-full w-full object-cover object-center transition-transform duration-300 ${
+                        isOutOfStock ? 'grayscale contrast-75' : 'group-hover:scale-105'
+                      }`}
                       onError={(e) => {
                         const el = e.target as HTMLElement;
                         el.style.display = 'none';
@@ -241,6 +259,20 @@ export const ShopPage: React.FC = () => {
                         }
                       }}
                     />
+
+                    {/* Prominent Out of Stock Overlay Badge */}
+                    {isOutOfStock ? (
+                      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-[2px] flex items-center justify-center p-3 text-center">
+                        <span className="rounded-full bg-rose-600 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-white shadow-lg border border-rose-400">
+                          Out of Stock
+                        </span>
+                      </div>
+                    ) : remaining <= 10 ? (
+                      /* Low Stock Indicator */
+                      <div className="absolute top-2.5 left-2.5 rounded-lg bg-amber-500/90 text-white px-2 py-0.5 text-[10px] font-extrabold backdrop-blur-xs shadow-xs">
+                        Only {remaining} left!
+                      </div>
+                    ) : null}
                     
                     {/* Volume & calorie tag */}
                     <div className="absolute bottom-2.5 left-2.5 rounded-lg bg-slate-900/80 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-xs">
@@ -253,7 +285,7 @@ export const ShopPage: React.FC = () => {
                         type="button"
                         onClick={() => setAdminUploadProduct(product)}
                         title="Admin: Replace this beverage's image"
-                        className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs backdrop-blur-xs transition-colors"
+                        className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs backdrop-blur-xs transition-colors"
                       >
                         <Upload className="h-3 w-3" />
                         <span>Replace Image</span>
@@ -282,28 +314,39 @@ export const ShopPage: React.FC = () => {
                       </p>
                     </div>
 
-                    {/* Buy Now button */}
+                    {/* Buy Now / Out of Stock button */}
                     <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80">
-                      <button
-                        onClick={() => handleBuyClick(product)}
-                        className={`w-full flex items-center justify-center gap-2 rounded-2xl py-2.5 px-4 text-xs font-bold transition-all duration-150 active:scale-95 cursor-pointer ${
-                          isAdded
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20'
-                        }`}
-                      >
-                        {isAdded ? (
-                          <>
-                            <Check className="h-4 w-4" />
-                            <span>Added to Cart!</span>
-                          </>
-                        ) : (
-                          <>
-                            <ShoppingBag className="h-4 w-4" />
-                            <span>Buy · ₹{product.price}</span>
-                          </>
-                        )}
-                      </button>
+                      {isOutOfStock ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full flex items-center justify-center gap-2 rounded-2xl py-2.5 px-4 text-xs font-bold bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed border border-slate-300/60 dark:border-slate-700/60"
+                        >
+                          <AlertCircle className="h-4 w-4" />
+                          <span>Out of Stock</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleBuyClick(product)}
+                          className={`w-full flex items-center justify-center gap-2 rounded-2xl py-2.5 px-4 text-xs font-bold transition-all duration-150 active:scale-95 cursor-pointer ${
+                            isAdded
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20'
+                          }`}
+                        >
+                          {isAdded ? (
+                            <>
+                              <Check className="h-4 w-4" />
+                              <span>Added to Cart!</span>
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingBag className="h-4 w-4" />
+                              <span>Buy · ₹{product.price}</span>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

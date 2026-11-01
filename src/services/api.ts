@@ -190,8 +190,15 @@ export const api = {
     });
   },
 
-  async updateProfile(payload: { name: string }) {
+  async updateProfile(payload: { name?: string; delivery_address?: string }) {
     return request<{ success: boolean; user: User }>('/api/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateAddress(payload: { address: string }) {
+    return request<{ success: boolean; message: string; user: User }>('/api/auth/address', {
       method: 'PUT',
       body: JSON.stringify(payload),
     });

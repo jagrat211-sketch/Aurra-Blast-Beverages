@@ -110,8 +110,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onProceedToCheckout }) =
                     <div className="flex flex-1 flex-col justify-between">
                       <div>
                         <div className="flex items-start justify-between gap-2">
-                          <h4 className="text-sm font-semibold text-slate-900 dark:text-white">
-                            {item.name}
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <span>{item.name}</span>
+                            {item.remaining_quantity !== undefined && item.remaining_quantity <= 0 && (
+                              <span className="rounded bg-rose-100 dark:bg-rose-950/80 px-1.5 py-0.2 text-[9px] font-black text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                OUT OF STOCK
+                              </span>
+                            )}
                           </h4>
                           <span className="text-sm font-semibold text-slate-900 tabular-nums dark:text-white">
                             ₹{item.price * item.qty}
@@ -192,9 +197,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onProceedToCheckout }) =
                 </div>
               </div>
 
+              {/* Out of Stock Safety Check */}
+              {items.some((item) => item.remaining_quantity !== undefined && item.remaining_quantity <= 0) && (
+                <div className="mb-3 rounded-xl bg-red-50 p-2.5 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50 flex items-center gap-2">
+                  <span className="font-bold">Notice:</span> Some items in your cart are out of stock. Please remove them to proceed.
+                </div>
+              )}
+
               <button
                 onClick={onProceedToCheckout}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 px-4 text-sm font-semibold text-white shadow-md hover:bg-amber-600 transition-all active:scale-[0.99]"
+                disabled={items.some((item) => item.remaining_quantity !== undefined && item.remaining_quantity <= 0)}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 px-4 text-sm font-semibold text-white shadow-md hover:bg-amber-600 transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 <span>Proceed to Purchase</span>
                 <ArrowRight className="h-4 w-4" />

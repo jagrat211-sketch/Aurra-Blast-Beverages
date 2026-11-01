@@ -37,6 +37,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signupSuccess, setSignupSuccess] = useState<string | null>(null);
   const [resendStatus, setResendStatus] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -44,6 +45,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSignupSuccess(null);
     setLoading(true);
 
     try {
@@ -85,6 +87,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSignupSuccess(null);
 
     if (password.length < 8) {
       setError('Password must be at least 8 characters long');
@@ -95,13 +98,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       const res = await signup(name, email, password);
-      if (res.user) {
-        onAuthSuccess(pendingProductToBuy);
-        onClose();
-      } else if (res.requiresVerification && res.email) {
-        setVerifyingEmail(res.email);
-        setDevCodePreview(res.devVerificationCode || null);
-      }
+      // FLOW REQUIREMENT:
+      // After a successful sign-up, do NOT log the user in automatically.
+      // Instead, redirect them to the Sign-In / Login page.
+      // The user must manually enter their registered email and password on the sign-in page to log into the application.
+      setActiveTab('signin');
+      setPassword('');
+      setSignupSuccess(res.message || 'Account created successfully! Please enter your password to sign in.');
     } catch (err: any) {
       setError(err.message || 'Failed to sign up. Email may already be registered.');
     } finally {
@@ -353,6 +356,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </form>
             ) : activeTab === 'signin' ? (
               <form onSubmit={handleLogin} className="space-y-3">
+                {signupSuccess && (
+                  <div className="rounded-xl bg-emerald-50 p-2.5 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
+                    <span className="font-bold">Account created!</span> {signupSuccess}
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Email address

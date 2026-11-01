@@ -5,7 +5,9 @@ export interface User {
   role: 'admin' | 'user';
   email_verified: number;
   created_at?: string;
+  updated_at?: string;
   avatar_url?: string;
+  delivery_address?: string;
   parent_id?: string;
 }
 
@@ -21,10 +23,11 @@ export interface Product {
   volume: string;
   calories: number;
   category?: string;
-  total_quantity: number;
-  remaining_quantity: number;
+  total_quantity?: number;
+  remaining_quantity?: number;
   active: number;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface CartItem {
@@ -35,6 +38,7 @@ export interface CartItem {
   qty: number;
   image_url: string;
   volume?: string;
+  remaining_quantity?: number;
 }
 
 export interface OrderItem {

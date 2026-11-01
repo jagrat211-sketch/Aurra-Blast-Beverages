@@ -101,6 +101,12 @@ export function initDatabase() {
     if (!colNames.includes('parent_id')) {
       db.prepare("ALTER TABLE users ADD COLUMN parent_id TEXT DEFAULT 'AURRA-DIST-IND-01'").run();
     }
+    if (!colNames.includes('delivery_address')) {
+      db.prepare("ALTER TABLE users ADD COLUMN delivery_address TEXT").run();
+    }
+    if (!colNames.includes('updated_at')) {
+      db.prepare("ALTER TABLE users ADD COLUMN updated_at TEXT").run();
+    }
   } catch (err) {
     console.warn('User table migration warning:', err);
   }
@@ -126,6 +132,9 @@ export function initDatabase() {
     if (!pColNames.includes('flavor_notes')) {
       db.prepare("ALTER TABLE products ADD COLUMN flavor_notes TEXT").run();
       db.prepare("UPDATE products SET flavor_notes = flavor WHERE flavor_notes IS NULL").run();
+    }
+    if (!pColNames.includes('updated_at')) {
+      db.prepare("ALTER TABLE products ADD COLUMN updated_at TEXT").run();
     }
 
     // Initialize stock for any products with null/zero values

@@ -43,7 +43,7 @@ export const AdminPage: React.FC = () => {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [isEditingProduct, setIsEditingProduct] = useState(false);
   
-  // New product form
+  // New product form with full Inventory & Stock Management fields
   const [productForm, setProductForm] = useState({
     id: '',
     name: '',
@@ -53,6 +53,9 @@ export const AdminPage: React.FC = () => {
     description: '',
     volume: '330ml',
     calories: 40,
+    category: 'Botanical Sparkler',
+    total_quantity: 50,
+    remaining_quantity: 50,
     active: 1,
   });
   const [imagePreview, setImagePreview] = useState<string>('');
@@ -173,9 +176,11 @@ export const AdminPage: React.FC = () => {
         ...productForm,
         price: Number(productForm.price),
         calories: Number(productForm.calories),
+        total_quantity: Number(productForm.total_quantity),
+        remaining_quantity: Number(productForm.remaining_quantity),
       });
 
-      setProductSuccess('Beverage flavor saved successfully!');
+      setProductSuccess('Beverage flavor saved successfully to database!');
       setTimeout(() => setProductSuccess(null), 3000);
       setIsEditingProduct(false);
       loadProducts();
@@ -190,6 +195,9 @@ export const AdminPage: React.FC = () => {
         description: '',
         volume: '330ml',
         calories: 40,
+        category: 'Botanical Sparkler',
+        total_quantity: 50,
+        remaining_quantity: 50,
         active: 1,
       });
       setImagePreview('');
@@ -401,6 +409,9 @@ export const AdminPage: React.FC = () => {
                   description: '',
                   volume: '330ml',
                   calories: 40,
+                  category: 'Botanical Sparkler',
+                  total_quantity: 50,
+                  remaining_quantity: 50,
                   active: 1,
                 });
                 setImagePreview('');
@@ -494,6 +505,58 @@ export const AdminPage: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {/* Inventory & Stock Management Fields */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Total Stock Quantity (Can/Bottle Units)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={productForm.total_quantity}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setProductForm((prev) => ({
+                        ...prev,
+                        total_quantity: val,
+                        // If creating new product, also default remaining quantity to total quantity
+                        remaining_quantity: prev.id ? prev.remaining_quantity : val,
+                      }));
+                    }}
+                    required
+                    placeholder="e.g. 50"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Remaining Quantity (Live Stock in Database)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={productForm.remaining_quantity}
+                    onChange={(e) => setProductForm({ ...productForm, remaining_quantity: Number(e.target.value) })}
+                    required
+                    placeholder="e.g. 50"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Category
+                </label>
+                <input
+                  type="text"
+                  value={productForm.category}
+                  onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                  placeholder="e.g. Botanical Sparkler"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
               </div>
 
               <div>
@@ -636,7 +699,25 @@ export const AdminPage: React.FC = () => {
                       <span className="text-xs font-bold text-amber-600 dark:text-amber-400 tabular-nums">₹{p.price}</span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{p.flavor}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">{p.calories} kcal · {p.active ? 'Active' : 'Archived'}</p>
+                    
+                    {/* Live Remaining Stock Indicator for Admin */}
+                    <div className="mt-1.5 flex items-center justify-between gap-1 text-[10px]">
+                      <span className="text-slate-400">{p.calories} kcal · {p.volume}</span>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-bold ${
+                          (p.remaining_quantity ?? 50) <= 0
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-400 border border-red-200 dark:border-red-900/50'
+                            : (p.remaining_quantity ?? 50) <= 10
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-900/50'
+                            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/50'
+                        }`}
+                        title="Remaining stock tracked in database"
+                      >
+                        <span>Remaining:</span>
+                        <strong className="font-mono text-[11px]">{p.remaining_quantity ?? 50}</strong>
+                        <span className="text-[9px] text-slate-500 dark:text-slate-400">/ {p.total_quantity ?? 50}</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -656,20 +737,23 @@ export const AdminPage: React.FC = () => {
                       setIsEditingProduct(true);
                       setProductForm({
                         id: p.id,
-                        name: p.name,
-                        flavor: p.flavor,
+                        name: p.beverage_name || p.name,
+                        flavor: p.flavor_notes || p.flavor,
                         price: p.price,
                         image_url: p.image_url,
                         description: p.description,
                         volume: p.volume,
                         calories: p.calories,
+                        category: p.category || 'Botanical Sparkler',
+                        total_quantity: p.total_quantity ?? 50,
+                        remaining_quantity: p.remaining_quantity ?? 50,
                         active: p.active,
                       });
                       setImagePreview(p.image_url);
                     }}
                     className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
                   >
-                    Edit Formulation
+                    Edit Formulation &amp; Stock
                   </button>
                 </div>
               </div>

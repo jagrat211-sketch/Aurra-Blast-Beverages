@@ -11,9 +11,13 @@ import {
   Check,
   ExternalLink,
   Clock,
-  ArrowRight
+  ArrowRight,
+  MapPin,
+  Edit2,
+  Save
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { useAuth } from '../context/AuthContext';
 import { useCartStore } from '../store/useCartStore';
 import { api } from '../services/api';
 import { Order } from '../types';
@@ -25,7 +29,15 @@ interface PaymentModalProps {
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onSuccess }) => {
+  const { user, updateAddress } = useAuth();
   const { items, getGrandTotal, clearCart, closeCart } = useCartStore();
+
+  // Delivery Address management state
+  const [addressInput, setAddressInput] = useState(user?.delivery_address || '');
+  const [isEditingAddress, setIsEditingAddress] = useState(!user?.delivery_address);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [addressSavedNotice, setAddressSavedNotice] = useState(false);
+
   // Two seamlessly integrated UPI methods: 'upi_id' (VPA) and 'upi_qr' (Scan QR)
   const [upiSubMethod, setUpiSubMethod] = useState<'vpa' | 'qr'>('qr');
   const [upiIdInput, setUpiIdInput] = useState('');
@@ -38,6 +50,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
   const grandTotal = getGrandTotal();
   const merchantVpa = 'aurrabeverages@icici';
   const upiPayIntent = `upi://pay?pa=${merchantVpa}&pn=Aurra%20Blast%20Beverages&am=${grandTotal}&cu=INR&tn=Aurra%20Sparklers%20Order`;
+
+  // Sync address state when user changes or modal opens
+  useEffect(() => {
+    if (user?.delivery_address) {
+      setAddressInput(user.delivery_address);
+      setIsEditingAddress(false);
+    } else {
+      setIsEditingAddress(true);
+    }
+  }, [user?.delivery_address, isOpen]);
 
   // Countdown timer for QR
   useEffect(() => {
@@ -70,8 +92,53 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
     setUpiIdInput(`${prefix}${handle}`);
   };
 
+  const handleSaveAddress = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = addressInput.trim();
+    if (!trimmed) {
+      setError('Please enter a delivery address.');
+      return;
+    }
+    setSavingAddress(true);
+    setError(null);
+    try {
+      await updateAddress(trimmed);
+      setIsEditingAddress(false);
+      setAddressSavedNotice(true);
+      setTimeout(() => setAddressSavedNotice(false), 2500);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update address');
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
   const handleProcessPayment = async () => {
-    // If VPA method is selected, ensure a valid-looking VPA is provided
+    // 1. Stock Safety Check: Reject if any item has 0 stock
+    const outOfStockItem = items.find((i) => i.remaining_quantity !== undefined && i.remaining_quantity <= 0);
+    if (outOfStockItem) {
+      setError(`Cannot place order: "${outOfStockItem.name}" is currently out of stock. Please remove it from your cart.`);
+      return;
+    }
+
+    // 2. Delivery Address Validation
+    const effectiveAddress = (user?.delivery_address || addressInput).trim();
+    if (!effectiveAddress) {
+      setError('Please provide your delivery address to proceed with checkout.');
+      setIsEditingAddress(true);
+      return;
+    }
+
+    // Auto-save address if modified and not yet saved
+    if (user && effectiveAddress !== user.delivery_address) {
+      try {
+        await updateAddress(effectiveAddress);
+      } catch (err) {
+        console.warn('Address auto-save notice:', err);
+      }
+    }
+
+    // 3. VPA format validation if VPA method selected
     if (upiSubMethod === 'vpa') {
       const trimmed = upiIdInput.trim();
       if (!trimmed || !trimmed.includes('@')) {
@@ -84,16 +151,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
     setError(null);
 
     try {
-      // 1. Prepare items payload for server (server securely computes real prices from DB)
+      // Prepare items payload for server (server securely computes prices and deducts remaining stock)
       const payloadItems = items.map((i) => ({
         productId: i.productId,
         qty: i.qty,
       }));
 
-      // 2. Call backend order creation endpoint
+      // Call backend order creation endpoint
       const res = await api.createOrder(payloadItems);
 
-      // 3. Trigger celebratory confetti
+      // Trigger celebratory confetti
       try {
         confetti({
           particleCount: 90,
@@ -104,7 +171,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
         // ignore confetti errors
       }
 
-      // 4. On successful purchase: clear cart, close drawer & modal, trigger confirmation
+      // On successful purchase: clear cart, close drawer & modal, trigger confirmation
       clearCart();
       closeCart();
       onClose();
@@ -178,6 +245,66 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
             </span>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{items.length} beverage item(s)</p>
           </div>
+        </div>
+
+        {/* Delivery Address Section */}
+        <div className="mt-4 rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+              <MapPin className="h-4 w-4 text-amber-500" />
+              <span>Delivery Address</span>
+              <span className="rounded bg-amber-500/10 px-1.5 py-0.2 text-[10px] font-extrabold text-amber-700 dark:text-amber-400">
+                REQUIRED
+              </span>
+            </div>
+            {!isEditingAddress && user?.delivery_address && (
+              <button
+                type="button"
+                onClick={() => setIsEditingAddress(true)}
+                className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400"
+              >
+                <Edit2 className="h-3 w-3" />
+                <span>Change</span>
+              </button>
+            )}
+          </div>
+
+          {isEditingAddress ? (
+            <div className="space-y-2">
+              <textarea
+                rows={2}
+                placeholder="Enter complete delivery address (House/Flat No., Street, Area, City, PIN Code)"
+                value={addressInput}
+                onChange={(e) => setAddressInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-semibold text-slate-900 placeholder-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Chilled delivery within 45-60 mins
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveAddress}
+                  disabled={savingAddress || !addressInput.trim()}
+                  className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {savingAddress ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                  <span>Save Address</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start justify-between">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 leading-relaxed">
+                {user?.delivery_address || addressInput}
+              </p>
+              {addressSavedNotice && (
+                <span className="shrink-0 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 ml-2">
+                  Saved!
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* UPI Method Tabs (Seamlessly integrates with UPI & with QR) */}

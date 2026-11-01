@@ -27,6 +27,8 @@ export const AuthPage: React.FC = () => {
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupLoading, setSignupLoading] = useState(false);
 
+  const [signupSuccessMessage, setSignupSuccessMessage] = useState<string | null>(null);
+
   // Email verification state
   const [verifyingEmail, setVerifyingEmail] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
@@ -45,6 +47,7 @@ export const AuthPage: React.FC = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
+    setSignupSuccessMessage(null);
     setLoginLoading(true);
 
     try {
@@ -85,6 +88,7 @@ export const AuthPage: React.FC = () => {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError(null);
+    setSignupSuccessMessage(null);
 
     // Frontend validation
     if (signupPassword.length < 8) {
@@ -96,12 +100,16 @@ export const AuthPage: React.FC = () => {
 
     try {
       const res = await signup(signupName, signupEmail, signupPassword);
-      if (res.user) {
-        navigate('/');
-      } else if (res.requiresVerification && res.email) {
-        setVerifyingEmail(res.email);
-        setDevCodePreview(res.devVerificationCode || null);
-      }
+      // FLOW REQUIREMENT:
+      // After a successful sign-up, do NOT log the user in automatically.
+      // Instead, redirect them to the Sign-In / Login page.
+      // The user must manually enter their registered email and password on the sign-in page to log into the application.
+      setActiveTab('signin');
+      setLoginEmail(signupEmail);
+      setLoginPassword('');
+      setSignupSuccessMessage(res.message || 'Account created successfully! Please enter your password to sign in.');
+      setSignupName('');
+      setSignupPassword('');
     } catch (err: any) {
       setSignupError(err.message || 'Failed to sign up. Email might already be registered.');
     } finally {
@@ -396,6 +404,16 @@ export const AuthPage: React.FC = () => {
                 </form>
               ) : (
                 <form onSubmit={handleLogin} className="space-y-4">
+                  {signupSuccessMessage && (
+                    <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                      <div>
+                        <span className="font-bold">Account created!</span>
+                        <p className="mt-0.5 text-[11px]">{signupSuccessMessage}</p>
+                      </div>
+                    </div>
+                  )}
+
                   {loginError && (
                     <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
                       <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />

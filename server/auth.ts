@@ -12,6 +12,11 @@ export interface AuthUser {
   email: string;
   role: string;
   email_verified: number;
+  created_at?: string;
+  updated_at?: string;
+  avatar_url?: string;
+  delivery_address?: string;
+  parent_id?: string;
 }
 
 declare global {
@@ -72,7 +77,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
     // Look up fresh user from DB to ensure account is valid
-    const user = db.prepare('SELECT id, name, email, role, email_verified FROM users WHERE id = ?').get(payload.id) as AuthUser | undefined;
+    const user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(payload.id) as AuthUser | undefined;
     if (!user) {
       clearAuthCookie(res);
       return res.status(401).json({ error: 'User account not found. Please log in again.' });
@@ -97,7 +102,7 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   if (token) {
     try {
       const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
-      const user = db.prepare('SELECT id, name, email, role, email_verified FROM users WHERE id = ?').get(payload.id) as AuthUser | undefined;
+      const user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(payload.id) as AuthUser | undefined;
       if (user) {
         req.user = user;
       }
