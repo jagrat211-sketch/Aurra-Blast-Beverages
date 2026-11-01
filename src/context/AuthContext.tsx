@@ -28,10 +28,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchCurrentUser = useCallback(async () => {
     try {
-      const res = await api.getMe();
-      setUser(res.user);
-      setCartUser(res.user);
-    } catch {
+      try {
+        const res = await api.getMe();
+        if (res?.user) {
+          setUser(res.user);
+          setCartUser(res.user);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const cached = localStorage.getItem('aurra_auth_user');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setUser(parsed);
+          setCartUser(parsed);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
       setUser(null);
       setCartUser(null);
     } finally {

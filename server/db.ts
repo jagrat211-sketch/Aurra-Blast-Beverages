@@ -1,11 +1,13 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // Ensure data directory exists with Vercel serverless /tmp support
 const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const dataDir = isVercel ? '/tmp/data' : path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
+if (!isVercel && !fs.existsSync(dataDir)) {
   try {
     fs.mkdirSync(dataDir, { recursive: true });
   } catch (e) {
@@ -14,32 +16,39 @@ if (!fs.existsSync(dataDir)) {
 }
 
 let dbInstance: any = null;
-try {
-  const dbPath = path.join(dataDir, 'beverage_store.db');
-  dbInstance = new Database(dbPath);
+if (!isVercel) {
   try {
-    dbInstance.pragma('journal_mode = WAL');
-    dbInstance.pragma('foreign_keys = ON');
-  } catch {
-    // Ignore pragma error if in read-only / restricted mode
+    const Database = require('better-sqlite3');
+    const dbPath = path.join(dataDir, 'beverage_store.db');
+    dbInstance = new Database(dbPath);
+    try {
+      dbInstance.pragma('journal_mode = WAL');
+      dbInstance.pragma('foreign_keys = ON');
+    } catch {
+      // Ignore pragma error if in read-only / restricted mode
+    }
+  } catch (err) {
+    console.warn('SQLite file open notice (falling back to memory mode):', err);
+    try {
+      const Database = require('better-sqlite3');
+      dbInstance = new Database(':memory:');
+    } catch {
+      dbInstance = null;
+    }
   }
-} catch (err) {
-  console.warn('SQLite file open notice (falling back to memory mode):', err);
-  try {
-    dbInstance = new Database(':memory:');
-  } catch (memErr) {
-    console.warn('SQLite native engine unavailable, active in-memory stub mode:', memErr);
-    dbInstance = {
-      pragma: () => {},
-      exec: () => {},
-      prepare: (_sql: string) => ({
-        get: () => null,
-        all: () => [],
-        run: () => ({ changes: 0, lastInsertRowid: 0 }),
-      }),
-      transaction: (fn: any) => (...args: any[]) => fn(...args),
-    };
-  }
+}
+
+if (!dbInstance) {
+  dbInstance = {
+    pragma: () => {},
+    exec: () => {},
+    prepare: (_sql: string) => ({
+      get: () => null,
+      all: () => [],
+      run: () => ({ changes: 0, lastInsertRowid: 0 }),
+    }),
+    transaction: (fn: any) => (...args: any[]) => fn(...args),
+  };
 }
 
 export const db = dbInstance;
