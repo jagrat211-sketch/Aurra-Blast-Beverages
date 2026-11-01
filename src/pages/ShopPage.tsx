@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCartStore } from '../store/useCartStore';
-import { api } from '../services/api';
+import { api, FALLBACK_PRODUCTS } from '../services/api';
 import { Product, Order } from '../types';
 import { CartDrawer } from '../components/CartDrawer';
 import { PaymentModal } from '../components/PaymentModal';
@@ -28,8 +28,8 @@ import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal
 export const ShopPage: React.FC = () => {
   const { user } = useAuth();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [products, setProducts] = useState<Product[]>(FALLBACK_PRODUCTS);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [addedAnimationId, setAddedAnimationId] = useState<string | null>(null);
 
   // Modals state
@@ -46,15 +46,17 @@ export const ShopPage: React.FC = () => {
   const addItem = useCartStore((state) => state.addItem);
   const openCart = useCartStore((state) => state.openCart);
 
-  // Load products (the 7 active signature drinks)
+  // Load products (the 8 signature drinks)
   const fetchProducts = async () => {
-    setLoadingProducts(true);
     try {
       const res = await api.getProducts();
       const activeProducts = (res.products || []).filter((p) => p.active !== 0);
-      setProducts(activeProducts);
+      if (activeProducts.length > 0) {
+        setProducts(activeProducts);
+      }
     } catch (err) {
-      console.error('Failed to load products:', err);
+      console.warn('Using client fallback products:', err);
+      setProducts(FALLBACK_PRODUCTS);
     } finally {
       setLoadingProducts(false);
     }

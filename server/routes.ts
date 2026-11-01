@@ -102,10 +102,14 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
       console.warn('Supabase check existing user warning:', checkErr);
     }
 
-    // Also check local SQLite
-    const existingLocal = db.prepare('SELECT id, email FROM users WHERE email = ?').get(cleanEmail) as { id: string; email: string } | undefined;
-    if (existingLocal) {
-      return res.status(400).json({ error: 'Email already registered. Please sign in.' });
+    // Also check local database if available
+    try {
+      const existingLocal = db.prepare('SELECT id, email FROM users WHERE email = ?').get(cleanEmail) as { id: string; email: string } | undefined;
+      if (existingLocal) {
+        return res.status(400).json({ error: 'Email already registered. Please sign in.' });
+      }
+    } catch {
+      // Ignore if local database is not ready or read-only
     }
 
     // 2. Hash password with bcrypt
@@ -128,19 +132,26 @@ router.post('/auth/signup', async (req: Request, res: Response) => {
         .maybeSingle();
 
       if (sbInsertError) {
-        console.warn('Supabase users insert note (RLS/policy):', sbInsertError.message || sbInsertError);
+        console.warn('Supabase users insert note:', sbInsertError.message || sbInsertError);
+        if (sbInsertError.code === '23505' || sbInsertError.message?.toLowerCase().includes('duplicate') || sbInsertError.message?.toLowerCase().includes('unique')) {
+          return res.status(400).json({ error: 'Email already registered. Please sign in.' });
+        }
       } else if (insertedData?.id) {
         userId = String(insertedData.id);
       }
-    } catch (sbErr) {
+    } catch (sbErr: any) {
       console.warn('Supabase users insert caught error:', sbErr);
     }
 
-    // 4. Save to local SQLite database so relational keys (orders, cart events) remain consistent
-    db.prepare(`
-      INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at)
-      VALUES (?, ?, ?, ?, 'user', 1, ?)
-    `).run(userId, name, cleanEmail, hashedPassword, createdAt);
+    // 4. Save to local SQLite database if available
+    try {
+      db.prepare(`
+        INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at)
+        VALUES (?, ?, ?, ?, 'user', 1, ?)
+      `).run(userId, name, cleanEmail, hashedPassword, createdAt);
+    } catch (localSaveErr) {
+      console.warn('Local SQLite write bypassed (serverless environment):', localSaveErr);
+    }
 
     // FLOW REQUIREMENT:
     // Do NOT log the user in automatically after sign-up.
@@ -622,12 +633,145 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
 // PRODUCTS ROUTES
 // -------------------------------------------------------------
 
+const DEFAULT_PRODUCTS = [
+  {
+    id: 'prod-cranberry-sparkle',
+    name: 'Aurra Sparkle Cranberry',
+    flavor: 'Tart Cranberry & Wild Botanicals',
+    price: 149,
+    image_url: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg',
+    description: 'Hand-picked crisp cranberries blended with mountain spring effervescence and floral botanical notes.',
+    volume: '330ml',
+    calories: 42,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-mint-mojito',
+    name: 'Aurra Mint Mojito',
+    flavor: 'Fresh Garden Spearmint & Persian Lime',
+    price: 159,
+    image_url: '/assets/images/bev_mint_mojito_1793439802738.jpg',
+    description: 'Muddled spearmint leaves paired with zesty cold-pressed lime and fine effervescent bubbles.',
+    volume: '330ml',
+    calories: 38,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-zesty-lime',
+    name: 'Aurra Zesty Lime',
+    flavor: 'Crisp Citrus & Himalayan Sea Salt',
+    price: 139,
+    image_url: '/assets/images/bev_zesty_lime_1793439823884.jpg',
+    description: 'Cold-pressed key limes with a subtle pinch of mineral salt for maximum crisp refreshment.',
+    volume: '330ml',
+    calories: 32,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-mango-rush',
+    name: 'Aurra Mango Rush',
+    flavor: 'Ratnagiri Alphonso & Sunlit Citrus',
+    price: 169,
+    image_url: '/assets/images/bev_mango_rush_1793439803204.jpg',
+    description: 'Pure sun-ripened Alphonso mango puree kissed with sparkling carbonation and subtle cardamom finish.',
+    volume: '330ml',
+    calories: 54,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-orange-fizz',
+    name: 'Aurra Fizz Orange',
+    flavor: 'Nagpur Mandarin & Valencia Orange',
+    price: 149,
+    image_url: '/assets/images/bev_orange_fizz_1793439826689.jpg',
+    description: 'Juicy burst of fresh-squeezed sunburst oranges with sparkling micro-bubbles and orange blossom essence.',
+    volume: '330ml',
+    calories: 48,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-peach-iced-tea',
+    name: 'Aurra Peach Iced Tea',
+    flavor: 'Darjeeling Black Tea & Ripe Golden Peach',
+    price: 159,
+    image_url: '/assets/images/bev_peach_iced_tea_1793439826681.jpg',
+    description: 'Single-estate Darjeeling black tea slow-brewed with golden orchard peach slices and organic mint.',
+    volume: '355ml',
+    calories: 40,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-passionfruit-fizz',
+    name: 'Aurra Passionfruit',
+    flavor: 'Tropical Passionfruit & Wild Citrus',
+    price: 169,
+    image_url: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg',
+    description: 'Lush golden passionfruit pulp gently carbonated with floral citrus blossom notes for a tropical burst.',
+    volume: '330ml',
+    calories: 44,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+  {
+    id: 'prod-berry-blast',
+    name: 'Aurra Berry Blast',
+    flavor: 'Wild Blackberry, Blueberry & Acai',
+    price: 179,
+    image_url: '/assets/aistudio/aurra_berry_blast.jpg',
+    description: 'A rich anthocyanin-packed blend of deep wild forest berries, dark grape skin, and fizzy spring water.',
+    volume: '330ml',
+    calories: 46,
+    active: 1,
+    total_quantity: 50,
+    remaining_quantity: 50,
+    category: 'Botanical Sparkler',
+  },
+];
+
 // GET /api/products
 router.get('/products', async (_req: Request, res: Response) => {
   try {
-    const products = db.prepare('SELECT * FROM products WHERE active = 1 ORDER BY created_at ASC').all() as any[];
+    let products: any[] = [];
+    try {
+      products = db.prepare('SELECT * FROM products WHERE active = 1 ORDER BY created_at ASC').all() as any[];
+    } catch {
+      products = [];
+    }
 
-    // Attempt to merge real-time inventory from Supabase products table if exists
+    if (!products || products.length === 0) {
+      products = DEFAULT_PRODUCTS.map((p) => ({ ...p }));
+    }
+
+    // Normalize image paths so /src/assets/images/ is always cleanly /assets/images/
+    for (const p of products) {
+      if (p.image_url && typeof p.image_url === 'string') {
+        if (p.image_url.startsWith('/src/assets/images/')) {
+          p.image_url = p.image_url.replace('/src/assets/images/', '/assets/images/');
+        }
+      }
+    }
+
+    // Attempt to merge real-time inventory from Supabase products table if available
     try {
       const { data: sbProds } = await supabase.from('products').select('*');
       if (sbProds && sbProds.length > 0) {
@@ -644,13 +788,13 @@ router.get('/products', async (_req: Request, res: Response) => {
         }
       }
     } catch {
-      // Use local SQLite values
+      // Use standard inventory values
     }
 
     return res.json({ products });
   } catch (err) {
-    console.error('Fetch products error:', err);
-    return res.status(500).json({ error: 'Failed to retrieve products' });
+    console.error('Fetch products notice (using defaults):', err);
+    return res.json({ products: DEFAULT_PRODUCTS });
   }
 });
 
