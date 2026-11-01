@@ -14,6 +14,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   updateProfile: (name: string) => Promise<{ success: boolean; user: User }>;
   updateAddress: (address: string) => Promise<{ success: boolean; user: User; message: string }>;
+  updateContactNo: (contactNo: string) => Promise<{ success: boolean; user: User; message: string }>;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; user: User }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; user: User }>;
@@ -121,6 +122,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
+  const updateContactNo = async (contactNo: string) => {
+    const res = await api.updateContactNo({ contactNo });
+    if (res.user) {
+      setUser(res.user);
+      setCartUser(res.user);
+    }
+    return res;
+  };
+
   const adminLogin = async (username: string, password: string) => {
     const res = await api.adminLogin({ username, password });
     if (res.user) {
@@ -156,6 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshUser: fetchCurrentUser,
         updateProfile,
         updateAddress,
+        updateContactNo,
         adminLogin,
         changePassword,
         updateAvatar,

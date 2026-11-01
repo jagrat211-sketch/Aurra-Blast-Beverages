@@ -210,11 +210,6 @@ export const ShopPage: React.FC = () => {
               Crafted with clean botanicals, effervescent bubbles, and real fruit puree. Click &quot;Buy&quot; to order with instant UPI.
             </p>
           </div>
-
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-400">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>All 8 Flavors Chilled &amp; In Stock</span>
-          </div>
         </div>
 
         {/* Product Grid: Shows the 7 Drinks */}
@@ -282,19 +277,6 @@ export const ShopPage: React.FC = () => {
                     <div className="absolute bottom-2.5 left-2.5 rounded-lg bg-slate-900/80 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-xs">
                       {product.volume} · {product.calories} kcal
                     </div>
-
-                    {/* Admin Image Replace Action */}
-                    {user?.role === 'admin' && (
-                      <button
-                        type="button"
-                        onClick={() => setAdminUploadProduct(product)}
-                        title="Admin: Replace this beverage's image"
-                        className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs backdrop-blur-xs transition-colors"
-                      >
-                        <Upload className="h-3 w-3" />
-                        <span>Replace Image</span>
-                      </button>
-                    )}
                   </div>
 
                   {/* Card Content */}

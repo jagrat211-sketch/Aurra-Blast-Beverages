@@ -17,7 +17,8 @@ import {
   Sparkles,
   Sliders,
   ExternalLink,
-  Globe
+  Globe,
+  Trash2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useFeatureFlags } from '../context/FeatureFlagContext';
@@ -80,6 +81,12 @@ export const AdminPage: React.FC = () => {
   // Users
   const [usersList, setUsersList] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userRoleFilter, setUserRoleFilter] = useState<'user' | 'admin' | 'all'>('user');
+
+  // Deleting product state & confirmation modal
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
 
   // SQL Query console
   const [queryInput, setQueryInput] = useState<string>(
@@ -247,6 +254,44 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  const promptDeleteProduct = (p: Product) => {
+    setProductToDelete(p);
+  };
+
+  const handleConfirmDeleteProduct = async () => {
+    if (!productToDelete) return;
+    const target = productToDelete;
+    const beverageName = target.beverage_name || target.name;
+    setDeletingProduct(true);
+    try {
+      await api.deleteProduct(target.id, beverageName);
+      setProducts((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== target.id &&
+            item.name !== beverageName &&
+            (item as any).beverage_name !== beverageName
+        )
+      );
+      loadOverview();
+      setProductToDelete(null);
+    } catch (err: any) {
+      console.error('Failed to delete product:', err);
+      // Still filter out from local view
+      setProducts((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== target.id &&
+            item.name !== beverageName &&
+            (item as any).beverage_name !== beverageName
+        )
+      );
+      setProductToDelete(null);
+    } finally {
+      setDeletingProduct(false);
+    }
+  };
+
   const handleRunQuery = async (queryText?: string) => {
     const sql = queryText || queryInput;
     setRunningQuery(true);
@@ -371,7 +416,7 @@ export const AdminPage: React.FC = () => {
           }`}
         >
           <ImageIcon className="h-4 w-4" />
-          <span>Beverage Catalog & Image Upload</span>
+          <span>Flavors of Aurra Catalog</span>
         </button>
 
         <button
@@ -749,11 +794,11 @@ export const AdminPage: React.FC = () => {
                 <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                   <button
                     type="button"
-                    onClick={() => setSelectedProductForUpload(p)}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400"
+                    onClick={() => promptDeleteProduct(p)}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
                   >
-                    <Upload className="h-3.5 w-3.5" />
-                    <span>Upload Image</span>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete</span>
                   </button>
 
                   <button
@@ -872,62 +917,89 @@ export const AdminPage: React.FC = () => {
       {/* TAB 3: Users */}
       {activeTab === 'users' && (
         <div className="mt-8 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">Registered Users</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Customer verification status, order count, and lifetime value
+                Customer accounts from users table (default: role user)
               </p>
             </div>
-            <button
-              onClick={loadUsers}
-              className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
+            
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="font-semibold text-slate-600 dark:text-slate-400">Filter Role:</span>
+                <select
+                  value={userRoleFilter}
+                  onChange={(e) => setUserRoleFilter(e.target.value as any)}
+                  className="rounded-xl border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                >
+                  <option value="user">Users (Default)</option>
+                  <option value="admin">Admins</option>
+                  <option value="all">All Roles</option>
+                </select>
+              </div>
+
+              <button
+                onClick={loadUsers}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <tr>
-                  <th className="py-3 px-4 font-semibold">User</th>
-                  <th className="py-3 px-4 font-semibold">Role</th>
-                  <th className="py-3 px-4 font-semibold">Email Verified</th>
-                  <th className="py-3 px-4 font-semibold">Orders Placed</th>
-                  <th className="py-3 px-4 font-semibold text-right">Total Spent</th>
+                  <th className="py-3 px-4 font-semibold">Name</th>
+                  <th className="py-3 px-4 font-semibold">Delivery Address</th>
+                  <th className="py-3 px-4 font-semibold">Email</th>
+                  <th className="py-3 px-4 font-semibold">Contact No.</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {usersList.map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                    <td className="py-3 px-4 font-medium text-slate-900 dark:text-white">
-                      <div>{u.name}</div>
-                      <div className="text-[10px] text-slate-400">{u.email}</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                        {u.role.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      {u.email_verified ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Verified
-                        </span>
-                      ) : (
-                        <span className="text-amber-500 font-semibold">Pending</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 tabular-nums font-mono text-slate-700 dark:text-slate-300">
-                      {u.order_count}
-                    </td>
-                    <td className="py-3 px-4 text-right font-bold tabular-nums text-slate-900 dark:text-white">
-                      ₹{u.total_spent}
+                {usersList
+                  .filter((u) => {
+                    if (userRoleFilter === 'all') return true;
+                    const role = (u.role || 'user').toLowerCase();
+                    return role === userRoleFilter.toLowerCase();
+                  })
+                  .map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
+                        {u.name || '—'}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate" title={u.delivery_address || ''}>
+                        {u.delivery_address || '—'}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
+                        {u.email || '—'}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-medium text-slate-700 dark:text-slate-200">
+                        {u.contact_no ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold">+91</span>
+                            <span>{u.contact_no}</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                {usersList.filter((u) => {
+                  if (userRoleFilter === 'all') return true;
+                  const role = (u.role || 'user').toLowerCase();
+                  return role === userRoleFilter.toLowerCase();
+                }).length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-slate-400">
+                      No registered {userRoleFilter === 'all' ? '' : userRoleFilter} accounts found.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -1192,6 +1264,52 @@ export const AdminPage: React.FC = () => {
           loadOverview();
         }}
       />
+
+      {/* Delete Product Confirmation Pop-up Modal */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center animate-in fade-in zoom-in-95">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400 mb-3">
+              <Trash2 className="h-6 w-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              Would you like to delete this product?
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 font-medium">
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                "{productToDelete.beverage_name || productToDelete.name}"
+              </span>
+              <br />
+              This will permanently delete this beverage from the catalog and database.
+            </p>
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setProductToDelete(null)}
+                disabled={deletingProduct}
+                className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteProduct}
+                disabled={deletingProduct}
+                className="flex-1 rounded-xl bg-rose-600 py-2.5 text-xs font-bold text-white hover:bg-rose-700 shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                {deletingProduct ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Yes</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

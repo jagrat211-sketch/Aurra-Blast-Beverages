@@ -27,8 +27,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Admin login mode (as requested with adminaurra@beverages.com)
   const [isAdminLogin, setIsAdminLogin] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('adminaurra@beverages.com');
-  const [adminPassword, setAdminPassword] = useState('admin');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   
   // Verification fields
   const [verifyingEmail, setVerifyingEmail] = useState<string | null>(null);
@@ -295,7 +295,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     Admin Portal Sign In
                   </span>
                   <p className="text-[10px] text-purple-700/80 dark:text-purple-400 mt-0.5">
-                    Credentials: <span className="font-mono font-bold">adminaurra@beverages.com</span> / <span className="font-mono font-bold">admin</span>
+                    Sign in with your registered Aurra administrator credentials.
                   </p>
                 </div>
 
@@ -306,10 +306,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <div className="relative">
                     <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                     <input
-                      type="text"
+                      type="email"
                       value={adminEmail}
                       onChange={(e) => setAdminEmail(e.target.value)}
                       placeholder="adminaurra@beverages.com"
+                      autoComplete="username"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       required
                     />
@@ -326,7 +327,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="password"
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Admin"
+                      placeholder="Enter admin password"
+                      autoComplete="current-password"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-9 pr-3 text-xs text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       required
                     />
@@ -409,6 +411,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     type="button"
                     onClick={() => {
                       setIsAdminLogin(true);
+                      setAdminPassword('');
                       setError(null);
                     }}
                     className="text-[10.5px] font-bold text-purple-600 hover:text-purple-700 dark:text-purple-400 hover:underline cursor-pointer flex items-center gap-1"

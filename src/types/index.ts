@@ -8,6 +8,7 @@ export interface User {
   updated_at?: string;
   avatar_url?: string;
   delivery_address?: string;
+  contact_no?: string;
   parent_id?: string;
 }
 

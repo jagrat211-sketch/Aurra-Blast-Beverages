@@ -15,7 +15,8 @@ import {
   Network,
   Sparkles,
   KeyRound,
-  MapPin
+  MapPin,
+  Phone
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -25,7 +26,7 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const { user, updateProfile, changePassword, updateAvatar, updateAddress } = useAuth();
+  const { user, updateProfile, changePassword, updateAvatar, updateAddress, updateContactNo } = useAuth();
 
   // Active section inside Settings: 'profile' | 'security'
   const [activeTab, setActiveTab] = useState<'profile' | 'security'>('profile');
@@ -39,6 +40,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const [addressInput, setAddressInput] = useState(user?.delivery_address || '');
   const [updatingAddress, setUpdatingAddress] = useState(false);
   const [addressSuccess, setAddressSuccess] = useState(false);
+
+  // Contact No. edit state (India +91, 10 digits only)
+  const [contactNoInput, setContactNoInput] = useState(user?.contact_no || '');
+  const [updatingContactNo, setUpdatingContactNo] = useState(false);
+  const [contactNoError, setContactNoError] = useState<string | null>(null);
+  const [contactNoSuccess, setContactNoSuccess] = useState(false);
 
   // Avatar upload state
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +100,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
       console.error(err);
     } finally {
       setUpdatingAddress(false);
+    }
+  };
+
+  const handleUpdateContactNo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setContactNoError(null);
+    const cleaned = contactNoInput.replace(/\D/g, '');
+    if (cleaned.length !== 10) {
+      setContactNoError('Please enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+    if (cleaned === user?.contact_no) return;
+
+    setUpdatingContactNo(true);
+    setContactNoSuccess(false);
+    try {
+      await updateContactNo(cleaned);
+      setContactNoSuccess(true);
+      setTimeout(() => setContactNoSuccess(false), 3000);
+    } catch (err: any) {
+      setContactNoError(err.message || 'Failed to update contact number');
+    } finally {
+      setUpdatingContactNo(false);
     }
   };
 
@@ -176,15 +206,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     ? user.id
     : `AURRA-MEM-${user.id.slice(0, 8).toUpperCase()}`;
 
-  const parentId = user.parent_id || 'AURRA-DIST-IND-01';
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" onClick={onClose} />
 
-      <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 sm:p-8 shadow-2xl transition-all dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <div className="relative w-full max-w-lg h-[540px] flex flex-col rounded-3xl bg-white p-6 sm:p-7 shadow-2xl transition-all dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300">
               <UserIcon className="h-5 w-5" />
@@ -203,7 +231,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         </div>
 
         {/* Section Tabs */}
-        <div className="mt-4 flex gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+        <div className="mt-3.5 flex gap-2 border-b border-slate-100 pb-3 dark:border-slate-800 shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('profile')}
@@ -233,18 +261,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
         {/* TAB 1: Profile & Membership info */}
         {activeTab === 'profile' && (
-          <div className="mt-5 space-y-6">
+          <div className="mt-4 flex-1 overflow-y-auto pr-1 space-y-4">
             {/* Avatar & Photo Upload */}
-            <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-4 p-3.5 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
               <div className="relative group">
                 {user.avatar_url ? (
                   <img
                     src={user.avatar_url}
                     alt={user.name}
-                    className="h-16 w-16 rounded-full object-cover border-2 border-amber-400 shadow-md ring-2 ring-white dark:ring-slate-800"
+                    className="h-14 w-14 rounded-full object-cover border-2 border-amber-400 shadow-md ring-2 ring-white dark:ring-slate-800"
                   />
                 ) : (
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-tr from-amber-500 to-orange-400 text-white text-xl font-black uppercase shadow-md ring-2 ring-white dark:ring-slate-800">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-tr from-amber-500 to-orange-400 text-white text-lg font-black uppercase shadow-md ring-2 ring-white dark:ring-slate-800">
                     {user.name?.charAt(0) || 'A'}
                   </div>
                 )}
@@ -254,9 +282,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   disabled={uploadingAvatar}
                   onClick={() => fileInputRef.current?.click()}
                   title="Upload profile photo"
-                  className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-white shadow-md hover:bg-amber-500 transition-colors cursor-pointer"
+                  className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-white shadow-md hover:bg-amber-500 transition-colors cursor-pointer"
                 >
-                  {uploadingAvatar ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
+                  {uploadingAvatar ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Camera className="h-2.5 w-2.5" />}
                 </button>
                 <input
                   type="file"
@@ -267,14 +295,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 />
               </div>
 
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">{user.name}</h4>
-                  <span className="rounded-full bg-emerald-50 px-2 py-0.2 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200/50">
-                    Verified Member
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.name}</h4>
+                  {user.role === 'admin' ? (
+                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200/60">
+                      Aurra Administrator
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200/50">
+                      Verified Member
+                    </span>
+                  )}
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/30">
+                    Aurra Club Member
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{user.email}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{user.email}</p>
                 
                 <button
                   type="button"
@@ -352,7 +389,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               )}
             </form>
 
-            {/* The 5 Key Information Fields */}
+            {/* Contact No. Field (India +91, 10 Digits only) */}
+            <form onSubmit={handleUpdateContactNo} className="space-y-1.5">
+              <label htmlFor="settings-contact-input" className="block text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Phone className="h-3.5 w-3.5 text-amber-500" />
+                  <span>Contact No.</span>
+                  <span className="text-[10px] font-normal text-slate-400">(Required for delivery)</span>
+                </span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold">India only (+91)</span>
+              </label>
+
+              <div className="flex gap-2">
+                <div className="flex flex-1 items-center rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-800 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 overflow-hidden">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700/60 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 select-none">
+                    <span>🇮🇳 +91</span>
+                  </div>
+                  <input
+                    id="settings-contact-input"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={10}
+                    value={contactNoInput}
+                    onChange={(e) => {
+                      const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setContactNoInput(digitsOnly);
+                      if (contactNoError) setContactNoError(null);
+                    }}
+                    placeholder="10-digit mobile number"
+                    className="flex-1 bg-transparent px-3 py-2 text-xs font-mono font-semibold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={updatingContactNo || contactNoInput.replace(/\D/g, '').length !== 10 || contactNoInput.replace(/\D/g, '') === user.contact_no}
+                  className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-40 transition-colors shrink-0 cursor-pointer"
+                >
+                  {updatingContactNo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save Contact'}
+                </button>
+              </div>
+
+              {contactNoError && (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>{contactNoError}</span>
+                </p>
+              )}
+              {contactNoSuccess && (
+                <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <Check className="h-3 w-3" />
+                  <span>Contact number updated successfully.</span>
+                </p>
+              )}
+            </form>
+
+            {/* The Key Information Fields */}
             <div className="space-y-3 rounded-2xl bg-slate-50/80 p-4 text-xs dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
               {/* 1. Member ID */}
               <div className="flex items-center justify-between border-b border-slate-200/60 pb-2.5 dark:border-slate-700/60">
@@ -385,7 +477,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               </div>
 
               {/* 3. Default Payment */}
-              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2.5 dark:border-slate-700/60">
+              <div className="flex items-center justify-between pt-0.5">
                 <span className="font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <CreditCard className="h-3.5 w-3.5 text-emerald-500" />
                   Default Payment
@@ -397,118 +489,85 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   </span>
                 </span>
               </div>
-
-              {/* 4. Parent ID */}
-              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2.5 dark:border-slate-700/60">
-                <span className="font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <Network className="h-3.5 w-3.5 text-amber-500" />
-                  Parent ID
-                </span>
-                <div className="flex items-center gap-1.5 font-mono font-bold text-slate-900 dark:text-white">
-                  <span>{parentId}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(parentId, 'parentId')}
-                    title="Copy Parent ID"
-                    className="rounded p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    {copiedField === 'parentId' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* 5. Verified Member / Club Member Status */}
-              <div className="flex items-center justify-between pt-0.5">
-                <span className="font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                  Membership Tier
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-400/30">
-                    Verified Member
-                  </span>
-                  <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-400/30">
-                    Aurra Club Member
-                  </span>
-                </div>
-              </div>
             </div>
           </div>
         )}
 
         {/* TAB 2: Change Password & Security */}
         {activeTab === 'security' && (
-          <form onSubmit={handleChangePassword} className="mt-5 space-y-4">
-            <div>
-              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Lock className="h-4 w-4 text-amber-500" />
-                Change Account Password
-              </h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Ensure your password is at least 8 characters long for account security.
-              </p>
-            </div>
-
-            {passwordError && (
-              <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>{passwordError}</span>
+          <form onSubmit={handleChangePassword} className="mt-4 flex-1 overflow-y-auto pr-1 flex flex-col justify-between space-y-4">
+            <div className="space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Lock className="h-4 w-4 text-amber-500" />
+                  Change Account Password
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Enter your current password and choose a strong new password (min. 8 characters).
+                </p>
               </div>
-            )}
 
-            {passwordSuccess && (
-              <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50">
-                <Check className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>Password changed successfully! Keep it safe.</span>
+              {passwordError && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{passwordError}</span>
+                </div>
+              )}
+
+              {passwordSuccess && (
+                <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50">
+                  <Check className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>Password changed successfully! Keep it safe.</span>
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="settings-current-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Current Password
+                </label>
+                <input
+                  id="settings-current-pwd"
+                  type="password"
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                />
               </div>
-            )}
 
-            <div>
-              <label htmlFor="settings-current-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                Current Password
-              </label>
-              <input
-                id="settings-current-pwd"
-                type="password"
-                required
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter current password"
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              />
+              <div>
+                <label htmlFor="settings-new-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  New Password (min. 8 characters)
+                </label>
+                <input
+                  id="settings-new-pwd"
+                  type="password"
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new strong password"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="settings-confirm-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Confirm New Password
+                </label>
+                <input
+                  id="settings-confirm-pwd"
+                  type="password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm your new password"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                />
+              </div>
             </div>
 
-            <div>
-              <label htmlFor="settings-new-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                New Password (min. 8 characters)
-              </label>
-              <input
-                id="settings-new-pwd"
-                type="password"
-                required
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new strong password"
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="settings-confirm-pwd" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                Confirm New Password
-              </label>
-              <input
-                id="settings-confirm-pwd"
-                type="password"
-                required
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm your new password"
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              />
-            </div>
-
-            <div className="pt-2">
+            <div className="pt-3 pb-1">
               <button
                 type="submit"
                 disabled={changingPassword}
@@ -526,18 +585,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
           </form>
         )}
-
-        {/* Footer info notice */}
-        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-          <span>Aurra Clean Energy Security</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="font-bold text-amber-600 hover:text-amber-700 dark:text-amber-400 cursor-pointer"
-          >
-            Done
-          </button>
-        </div>
       </div>
     </div>
   );

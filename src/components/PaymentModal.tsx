@@ -14,7 +14,8 @@ import {
   ArrowRight,
   MapPin,
   Edit2,
-  Save
+  Save,
+  Phone
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../context/AuthContext';
@@ -29,7 +30,7 @@ interface PaymentModalProps {
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onSuccess }) => {
-  const { user, updateAddress } = useAuth();
+  const { user, updateAddress, updateContactNo } = useAuth();
   const { items, getGrandTotal, clearCart, closeCart } = useCartStore();
 
   // Delivery Address management state
@@ -37,6 +38,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
   const [isEditingAddress, setIsEditingAddress] = useState(!user?.delivery_address);
   const [savingAddress, setSavingAddress] = useState(false);
   const [addressSavedNotice, setAddressSavedNotice] = useState(false);
+
+  // Contact Number management state (India +91, 10 digits only)
+  const [contactNoInput, setContactNoInput] = useState(user?.contact_no || '');
+  const [isEditingContactNo, setIsEditingContactNo] = useState(!user?.contact_no);
+  const [savingContactNo, setSavingContactNo] = useState(false);
+  const [contactNoSavedNotice, setContactNoSavedNotice] = useState(false);
 
   // Two seamlessly integrated UPI methods: 'upi_id' (VPA) and 'upi_qr' (Scan QR)
   const [upiSubMethod, setUpiSubMethod] = useState<'vpa' | 'qr'>('qr');
@@ -51,7 +58,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
   const merchantVpa = 'aurrabeverages@icici';
   const upiPayIntent = `upi://pay?pa=${merchantVpa}&pn=Aurra%20Blast%20Beverages&am=${grandTotal}&cu=INR&tn=Aurra%20Sparklers%20Order`;
 
-  // Sync address state when user changes or modal opens
+  // Sync address & contact state when user changes or modal opens
   useEffect(() => {
     if (user?.delivery_address) {
       setAddressInput(user.delivery_address);
@@ -59,7 +66,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
     } else {
       setIsEditingAddress(true);
     }
-  }, [user?.delivery_address, isOpen]);
+    if (user?.contact_no) {
+      setContactNoInput(user.contact_no);
+      setIsEditingContactNo(false);
+    } else {
+      setIsEditingContactNo(true);
+    }
+  }, [user?.delivery_address, user?.contact_no, isOpen]);
 
   // Countdown timer for QR
   useEffect(() => {
@@ -113,6 +126,27 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
     }
   };
 
+  const handleSaveContactNo = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const digits = contactNoInput.replace(/\D/g, '');
+    if (digits.length !== 10) {
+      setError('Please enter a valid 10-digit Indian contact number (+91).');
+      return;
+    }
+    setSavingContactNo(true);
+    setError(null);
+    try {
+      await updateContactNo(digits);
+      setIsEditingContactNo(false);
+      setContactNoSavedNotice(true);
+      setTimeout(() => setContactNoSavedNotice(false), 2500);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update contact number');
+    } finally {
+      setSavingContactNo(false);
+    }
+  };
+
   const handleProcessPayment = async () => {
     // 1. Stock Safety Check: Reject if any item has 0 stock
     const outOfStockItem = items.find((i) => i.remaining_quantity !== undefined && i.remaining_quantity <= 0);
@@ -138,7 +172,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
       }
     }
 
-    // 3. VPA format validation if VPA method selected
+    // 3. Contact Number Validation (Mandatory 10-digit Indian mobile number)
+    const effectiveContactNo = (contactNoInput || user?.contact_no || '').replace(/\D/g, '');
+    if (!effectiveContactNo || effectiveContactNo.length !== 10) {
+      setError('Please provide a valid 10-digit Indian Contact No. (+91) to proceed with checkout.');
+      setIsEditingContactNo(true);
+      return;
+    }
+
+    // Auto-save contact number if modified and not yet saved
+    if (user && effectiveContactNo !== user.contact_no) {
+      try {
+        await updateContactNo(effectiveContactNo);
+      } catch (err) {
+        console.warn('Contact auto-save notice:', err);
+      }
+    }
+
+    // 4. VPA format validation if VPA method selected
     if (upiSubMethod === 'vpa') {
       const trimmed = upiIdInput.trim();
       if (!trimmed || !trimmed.includes('@')) {
@@ -299,6 +350,80 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
                 {user?.delivery_address || addressInput}
               </p>
               {addressSavedNotice && (
+                <span className="shrink-0 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 ml-2">
+                  Saved!
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Contact Number Section (Mandatory: India +91, 10 Digits) */}
+        <div className="mt-3 rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+              <Phone className="h-4 w-4 text-amber-500" />
+              <span>Contact Number</span>
+              <span className="rounded bg-amber-500/10 px-1.5 py-0.2 text-[10px] font-extrabold text-amber-700 dark:text-amber-400">
+                REQUIRED
+              </span>
+              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold ml-1">India only (+91)</span>
+            </div>
+            {!isEditingContactNo && user?.contact_no && (
+              <button
+                type="button"
+                onClick={() => setIsEditingContactNo(true)}
+                className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400"
+              >
+                <Edit2 className="h-3 w-3" />
+                <span>Change</span>
+              </button>
+            )}
+          </div>
+
+          {isEditingContactNo ? (
+            <div className="space-y-2">
+              <div className="flex items-center rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 overflow-hidden">
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 select-none">
+                  <span>🇮🇳 +91</span>
+                </div>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={10}
+                  placeholder="10-digit mobile number"
+                  value={contactNoInput}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setContactNoInput(digits);
+                    if (error) setError(null);
+                  }}
+                  className="flex-1 bg-transparent px-3 py-2 text-xs font-mono font-semibold text-slate-900 dark:text-white focus:outline-none placeholder-slate-400"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Required for delivery executive updates &amp; SMS
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveContactNo}
+                  disabled={savingContactNo || contactNoInput.replace(/\D/g, '').length !== 10}
+                  className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {savingContactNo ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                  <span>Save Contact</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start justify-between">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 leading-relaxed font-mono">
+                <span className="text-amber-600 dark:text-amber-400 font-bold mr-1">+91</span>
+                {user?.contact_no || contactNoInput}
+              </p>
+              {contactNoSavedNotice && (
                 <span className="shrink-0 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 ml-2">
                   Saved!
                 </span>

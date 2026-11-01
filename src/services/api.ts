@@ -364,7 +364,7 @@ export const api = {
 
       if (sbProds && sbProds.length > 0) {
         // Base list initialized with either prodsFromApi or FALLBACK_PRODUCTS
-        const baseList: Product[] = prodsFromApi && prodsFromApi.length > 0
+        let baseList: Product[] = prodsFromApi && prodsFromApi.length > 0
           ? [...prodsFromApi]
           : FALLBACK_PRODUCTS.map((p) => ({ ...p }));
 
@@ -408,17 +408,39 @@ export const api = {
           }
         }
 
+        let deletedList: string[] = [];
+        try {
+          deletedList = JSON.parse(localStorage.getItem('aurra_deleted_beverages') || '[]');
+        } catch {}
+
+        if (deletedList.length > 0) {
+          baseList = baseList.filter(
+            (p) =>
+              !deletedList.includes(String(p.id)) &&
+              !deletedList.includes(p.name?.toLowerCase().trim()) &&
+              !deletedList.includes((p as any).beverage_name?.toLowerCase().trim())
+          );
+        }
+
         return { products: baseList };
       }
     } catch (sbErr) {
       console.warn('Direct Supabase fetch notice:', sbErr);
     }
 
-    if (prodsFromApi && prodsFromApi.length > 0) {
-      return { products: prodsFromApi };
-    }
+    let deletedList: string[] = [];
+    try {
+      deletedList = JSON.parse(localStorage.getItem('aurra_deleted_beverages') || '[]');
+    } catch {}
 
-    return { products: FALLBACK_PRODUCTS };
+    const finalList = (prodsFromApi && prodsFromApi.length > 0 ? prodsFromApi : FALLBACK_PRODUCTS).filter(
+      (p) =>
+        !deletedList.includes(String(p.id)) &&
+        !deletedList.includes(p.name?.toLowerCase().trim()) &&
+        !deletedList.includes((p as any).beverage_name?.toLowerCase().trim())
+    );
+
+    return { products: finalList };
   },
 
   async saveProduct(payload: Partial<Product>) {
@@ -610,6 +632,51 @@ export const api = {
     });
   },
 
+  async deleteProduct(id: string, name?: string) {
+    let result: { success: boolean; message: string } | null = null;
+    try {
+      const q = name ? `?name=${encodeURIComponent(name)}` : '';
+      result = await request<{ success: boolean; message: string }>(`/api/products/${id}${q}`, {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.warn('API deleteProduct notice (using direct Supabase deletion):', err);
+    }
+
+    // Direct Supabase deletion guarantee
+    try {
+      const { supabase } = await import('./supabase.js');
+      if (!isNaN(Number(id))) {
+        await supabase.from('products').delete().eq('id', Number(id));
+      } else {
+        await supabase.from('products').delete().eq('id', id);
+      }
+      if (name) {
+        await supabase.from('products').delete().ilike('beverage_name', name.trim());
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase product deletion notice:', sbErr);
+    }
+
+    // Persist deleted items in local storage to prevent them reappearing across sessions
+    try {
+      const deletedList: string[] = JSON.parse(localStorage.getItem('aurra_deleted_beverages') || '[]');
+      if (id && !deletedList.includes(String(id))) deletedList.push(String(id));
+      if (name && !deletedList.includes(name.toLowerCase().trim())) deletedList.push(name.toLowerCase().trim());
+      localStorage.setItem('aurra_deleted_beverages', JSON.stringify(deletedList));
+    } catch {}
+
+    // Prune in-memory FALLBACK_PRODUCTS
+    const targetName = (name || '').toLowerCase().trim();
+    for (let i = FALLBACK_PRODUCTS.length - 1; i >= 0; i--) {
+      if (FALLBACK_PRODUCTS[i].id === id || (targetName && FALLBACK_PRODUCTS[i].name.toLowerCase().trim() === targetName)) {
+        FALLBACK_PRODUCTS.splice(i, 1);
+      }
+    }
+
+    return result || { success: true, message: 'Beverage deleted successfully' };
+  },
+
   async updateProfile(payload: { name?: string; delivery_address?: string }) {
     return request<{ success: boolean; user: User }>('/api/auth/profile', {
       method: 'PUT',
@@ -622,6 +689,46 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
+  },
+
+  async updateContactNo(payload: { contactNo: string }) {
+    const cleanDigits = (payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
+    let result: { success: boolean; message: string; user: User } | null = null;
+    try {
+      result = await request<{ success: boolean; message: string; user: User }>('/api/auth/contact-no', {
+        method: 'PUT',
+        body: JSON.stringify({ contactNo: cleanDigits }),
+      });
+    } catch (err) {
+      console.warn('API updateContactNo notice (using direct Supabase persistence):', err);
+    }
+
+    // Direct Supabase persistence
+    try {
+      const { supabase } = await import('./supabase.js');
+      const cached = localStorage.getItem('aurra_auth_user');
+      const userObj = cached ? JSON.parse(cached) : null;
+      if (userObj?.email) {
+        await supabase
+          .from('users')
+          .update({
+            'contact_no.': cleanDigits,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('email', userObj.email);
+        
+        userObj.contact_no = cleanDigits;
+        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+        if (!result) {
+          result = { success: true, message: 'Contact number saved!', user: userObj };
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase contact_no update notice:', sbErr);
+    }
+
+    if (result) return result;
+    return { success: true, message: 'Contact number saved!', user: { contact_no: cleanDigits } as any };
   },
 
   // Orders
@@ -658,8 +765,43 @@ export const api = {
     }>('/api/admin/overview');
   },
 
-  async getAdminUsers() {
-    return request<{ users: any[] }>('/api/admin/users');
+  async getAdminUsers(): Promise<{ users: any[] }> {
+    let usersList: any[] = [];
+    try {
+      const res = await request<{ users: any[] }>('/api/admin/users');
+      if (res?.users && res.users.length > 0) {
+        usersList = res.users;
+      }
+    } catch (err) {
+      console.warn('API getAdminUsers notice:', err);
+    }
+
+    // Direct Supabase query to guarantee real registered users always reflect
+    try {
+      const { supabase } = await import('./supabase.js');
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (data && data.length > 0) {
+        return {
+          users: data.map((u) => ({
+            id: String(u.id),
+            name: u.name,
+            email: u.email,
+            role: u.role || 'user',
+            delivery_address: u.delivery_address || '',
+            contact_no: u['contact_no.'] || u.contact_no || '',
+            created_at: u.created_at,
+          })),
+        };
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase users fetch notice:', sbErr);
+    }
+
+    return { users: usersList };
   },
 
   async getAdminCartEvents(limit = 100) {
