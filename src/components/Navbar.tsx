@@ -12,7 +12,8 @@ import {
   Clock,
   CheckCircle2,
   Settings as SettingsIcon,
-  Sparkles
+  Sparkles,
+  Package
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -54,7 +55,7 @@ export const Navbar: React.FC = () => {
     navigate('/');
   };
 
-  const handleNavigateOrders = (tab: 'current' | 'past') => {
+  const handleNavigateOrders = (tab: 'pending' | 'completed') => {
     setIsDropdownOpen(false);
     navigate(`/orders?tab=${tab}`);
   };
@@ -224,20 +225,20 @@ export const Navbar: React.FC = () => {
                     <div className="space-y-0.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
                       <button
                         type="button"
-                        onClick={() => handleNavigateOrders('current')}
+                        onClick={() => handleNavigateOrders('pending')}
                         className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-left hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white transition-colors cursor-pointer"
                       >
                         <Clock className="h-4 w-4 text-amber-500" />
-                        <span>My Current Orders</span>
+                        <span>Pending Orders</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => handleNavigateOrders('past')}
+                        onClick={() => handleNavigateOrders('completed')}
                         className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-left hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white transition-colors cursor-pointer"
                       >
                         <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                        <span>My Past Orders</span>
+                        <span>Completed Orders</span>
                       </button>
 
                       <button

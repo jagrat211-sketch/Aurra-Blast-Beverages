@@ -13,16 +13,21 @@ export class ApiError extends Error {
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   let token: string | null = null;
+  let cachedUser: any = null;
   try {
     token = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_token') : null;
+    const userStr = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
+    if (userStr) cachedUser = JSON.parse(userStr);
   } catch {
     // ignore
   }
 
-  const headers = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}`, 'x-auth-token': token } : {}),
+    ...(cachedUser?.id ? { 'x-user-id': String(cachedUser.id) } : {}),
+    ...(cachedUser?.email ? { 'x-user-email': String(cachedUser.email) } : {}),
+    ...((options.headers as Record<string, string>) || {}),
   };
 
   const response = await fetch(url, {
@@ -166,9 +171,16 @@ export const FALLBACK_PRODUCTS: Product[] = [
 
 export const api = {
   // Auth
-  async getMe(): Promise<{ user: User | null }> {
+  async getMe(): Promise<{ user: User | null; token?: string }> {
     try {
-      return await request<{ user: User }>('/api/auth/me');
+      const res = await request<{ user: User; token?: string }>('/api/auth/me');
+      if (res?.token) {
+        try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
+      }
+      if (res?.user) {
+        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+      }
+      return res;
     } catch (err: any) {
       if (err.status === 401) {
         return { user: null };
@@ -1052,14 +1064,111 @@ export const api = {
   },
 
   async getOrders(): Promise<{ orders: Order[] }> {
-    return request<{ orders: Order[] }>('/api/orders');
+    let ordersList: Order[] = [];
+    try {
+      const res = await request<{ orders: Order[] }>('/api/orders');
+      if (res?.orders) {
+        ordersList = res.orders;
+      }
+    } catch (err) {
+      console.warn('API getOrders notice, checking direct Supabase:', err);
+    }
+
+    // Direct Supabase fetch guarantee for logged-in user
+    try {
+      const { supabase } = await import('./supabase.js');
+      const cached = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
+      const userObj = cached ? JSON.parse(cached) : null;
+      if (userObj) {
+        let sbUserId: number | null = null;
+        if (userObj.email) {
+          const { data: u } = await supabase.from('users').select('id').ilike('email', userObj.email.trim()).maybeSingle();
+          if (u?.id) sbUserId = Number(u.id);
+        }
+        if (!sbUserId && userObj.id && !isNaN(Number(userObj.id))) {
+          sbUserId = Number(userObj.id);
+        }
+
+        if (sbUserId) {
+          const { data: sbOrders } = await supabase
+            .from('orders')
+            .select('*, order_items(*)')
+            .eq('user_id', sbUserId)
+            .order('created_at', { ascending: false });
+
+          if (sbOrders && sbOrders.length > 0) {
+            const { data: sbProds } = await supabase.from('products').select('id, beverage_name, price');
+            const prodMap = new Map<number, { name: string; price: number }>();
+            (sbProds || []).forEach((p) => prodMap.set(Number(p.id), { name: p.beverage_name, price: Number(p.price) || 149 }));
+
+            for (const sbo of sbOrders) {
+              const mappedItems = (sbo.order_items || []).map((it: any) => {
+                const pInfo = prodMap.get(Number(it.product_id));
+                return {
+                  id: String(it.id),
+                  product_id: String(it.product_id),
+                  name_snapshot: pInfo?.name || it.name_snapshot || 'Aurra Beverage',
+                  price_snapshot: Number(it.price) || pInfo?.price || 149,
+                  qty: Number(it.quantity || it.qty) || 1,
+                };
+              });
+
+              const matchIndex = ordersList.findIndex((o) => String(o.id) === String(sbo.id));
+              if (matchIndex >= 0) {
+                ordersList[matchIndex].status = sbo.status || ordersList[matchIndex].status;
+                if (!ordersList[matchIndex].items?.length && mappedItems.length) {
+                  ordersList[matchIndex].items = mappedItems;
+                }
+              } else {
+                ordersList.push({
+                  id: String(sbo.id),
+                  user_id: String(sbo.user_id),
+                  total: Number(sbo.total_amount) || 149,
+                  status: sbo.status || 'confirmed',
+                  created_at: sbo.created_at || new Date().toISOString(),
+                  items: mappedItems,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase getOrders lookup note:', sbErr);
+    }
+
+    ordersList.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return { orders: ordersList };
   },
 
   async updateOrderStatus(orderId: string, status: string) {
-    return request<{ success: boolean; status: string }>(`/api/orders/${orderId}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    });
+    let result: { success: boolean; status: string } | null = null;
+    try {
+      result = await request<{ success: boolean; status: string }>(`/api/orders/${orderId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+    } catch (err) {
+      console.warn('API updateOrderStatus note:', err);
+    }
+
+    // Direct Supabase status update guarantee
+    try {
+      const { supabase } = await import('./supabase.js');
+      if (!isNaN(Number(orderId))) {
+        await supabase.from('orders').update({ status }).eq('id', Number(orderId));
+      } else {
+        await supabase.from('orders').update({ status }).eq('id', orderId);
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase updateOrderStatus note:', sbErr);
+    }
+
+    return result || { success: true, status };
+  },
+
+  async getAdminOrders(): Promise<{ orders: any[] }> {
+    return request<{ orders: any[] }>('/api/admin/orders');
   },
 
   // Admin

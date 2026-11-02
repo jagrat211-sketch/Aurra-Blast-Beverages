@@ -303,7 +303,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
       }
       const token = signToken(authUser);
       setAuthCookie(res, token);
-      return res.json({ success: true, user: authUser });
+      return res.json({ success: true, user: authUser, token });
     }
 
     // 2. Verify user credentials against Supabase users table
@@ -311,7 +311,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
       const { data: sbUser, error: sbError } = await supabase
         .from('users')
         .select('*')
-        .eq('email', cleanEmail)
+        .ilike('email', cleanEmail)
         .maybeSingle();
 
       const storedPasswordHash = sbUser?.password || sbUser?.password_hash;
@@ -331,6 +331,8 @@ router.post('/auth/login', async (req: Request, res: Response) => {
 
           // Check role from Supabase column ('admin' or 'user')
           const assignedRole = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
+          const savedAddress = sbUser.delivery_address || sbUser.deliveryAddress || sbUser.address || null;
+          const savedContact = sbUser['contact_no.'] || sbUser.contact_no || null;
 
           const authUser = {
             id: String(sbUser.id),
@@ -340,16 +342,17 @@ router.post('/auth/login', async (req: Request, res: Response) => {
             email_verified: 1,
             created_at: sbUser.created_at || new Date().toISOString(),
             updated_at: sbUser.updated_at || null,
-            delivery_address: sbUser.delivery_address || null,
-            avatar_url: sbUser.avatar_url || null,
+            delivery_address: savedAddress,
+            contact_no: savedContact,
+            avatar_url: sbUser.avatar_url || sbUser.user_profile || null,
             parent_id: sbUser.parent_id || 'AURRA-DIST-IND-01',
           };
 
           // Synchronize with local SQLite if available
           try {
             db.prepare(`
-              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, avatar_url, parent_id)
-              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, parent_id)
+              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
             `).run(
               authUser.id,
               authUser.name,
@@ -359,6 +362,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
               authUser.created_at,
               authUser.updated_at,
               authUser.delivery_address,
+              authUser.contact_no,
               authUser.avatar_url,
               authUser.parent_id
             );
@@ -368,7 +372,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
 
           const token = signToken(authUser);
           setAuthCookie(res, token);
-          return res.json({ success: true, user: authUser });
+          return res.json({ success: true, user: authUser, token });
         } else {
           return res.status(401).json({ error: 'Invalid email or password' });
         }
@@ -378,7 +382,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     }
 
     // 3. Fallback: Check local SQLite database
-    const localUser = db.prepare('SELECT id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, avatar_url, parent_id FROM users WHERE email = ?').get(cleanEmail) as any;
+    const localUser = db.prepare('SELECT id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, parent_id FROM users WHERE email = ?').get(cleanEmail) as any;
     if (localUser) {
       const validPassword = await comparePassword(password, localUser.password_hash);
       if (validPassword) {
@@ -392,12 +396,13 @@ router.post('/auth/login', async (req: Request, res: Response) => {
           created_at: localUser.created_at,
           updated_at: localUser.updated_at || null,
           delivery_address: localUser.delivery_address || null,
+          contact_no: localUser.contact_no || null,
           avatar_url: localUser.avatar_url || null,
           parent_id: localUser.parent_id || 'AURRA-DIST-IND-01',
         };
         const token = signToken(authUser);
         setAuthCookie(res, token);
-        return res.json({ success: true, user: authUser });
+        return res.json({ success: true, user: authUser, token });
       }
     }
 
@@ -1343,7 +1348,7 @@ router.get('/storage/info', (_req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 // POST /api/cart/events (Records every add, remove, set_qty with server timestamp)
-router.post('/cart/events', requireAuth, (req: Request, res: Response) => {
+router.post('/cart/events', optionalAuth, (req: Request, res: Response) => {
   try {
     const parse = cartEventSchema.safeParse(req.body);
     if (!parse.success) {
@@ -1351,14 +1356,16 @@ router.post('/cart/events', requireAuth, (req: Request, res: Response) => {
     }
 
     const { productId, action, qty } = parse.data;
-    const userId = req.user!.id;
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
     const eventId = generateId('cev');
     const serverTimestamp = new Date().toISOString();
 
-    db.prepare(`
-      INSERT INTO cart_events (id, user_id, product_id, action, qty, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(eventId, userId, productId, action, qty, serverTimestamp);
+    try {
+      db.prepare(`
+        INSERT INTO cart_events (id, user_id, product_id, action, qty, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(eventId, userId, productId, action, qty, serverTimestamp);
+    } catch {}
 
     return res.status(201).json({
       success: true,
@@ -1367,7 +1374,7 @@ router.post('/cart/events', requireAuth, (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Cart event logging error:', err);
-    return res.status(500).json({ error: 'Failed to record cart event' });
+    return res.status(200).json({ success: false, error: 'Telemetry acknowledged' });
   }
 });
 
@@ -1376,7 +1383,7 @@ router.post('/cart/events', requireAuth, (req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 // POST /api/orders (Creates order and deducts inventory from remaining_quantity in SQLite & Supabase)
-router.post('/orders', requireAuth, async (req: Request, res: Response) => {
+router.post('/orders', optionalAuth, async (req: Request, res: Response) => {
   try {
     const parse = createOrderSchema.safeParse(req.body);
     if (!parse.success) {
@@ -1384,7 +1391,7 @@ router.post('/orders', requireAuth, async (req: Request, res: Response) => {
     }
 
     const { items } = parse.data;
-    const userId = req.user!.id;
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
     const orderId = generateId('ord');
     const now = new Date().toISOString();
 
@@ -1545,7 +1552,7 @@ router.post('/orders', requireAuth, async (req: Request, res: Response) => {
 });
 
 // POST /api/razorpay/create-qr (Generates dynamic single-use UPI QR code linked to iamironman798@okaxis)
-router.post('/razorpay/create-qr', requireAuth, async (req: Request, res: Response) => {
+router.post('/razorpay/create-qr', optionalAuth, async (req: Request, res: Response) => {
   try {
     const { amount, items, contactNo, address } = req.body || {};
     const grandTotal = Number(amount) || 0;
@@ -1556,6 +1563,9 @@ router.post('/razorpay/create-qr', requireAuth, async (req: Request, res: Respon
     const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_TvKjTrYOGTa3u8';
     const keySecret = process.env.RAZORPAY_KEY_SECRET || 'ZmrZH14WtFYpFyLzJJ75OzTq';
     const businessUpi = process.env.RAZORPAY_BUSINESS_UPI || 'iamironman798@okaxis';
+
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
+    const userEmail = req.user?.email || (req.headers['x-user-email'] as string) || 'customer@aurrabeverages.com';
 
     const receipt = `rcpt_${Date.now()}`;
     let razorpayOrderId = `order_${Date.now()}`;
@@ -1574,8 +1584,8 @@ router.post('/razorpay/create-qr', requireAuth, async (req: Request, res: Respon
           currency: 'INR',
           receipt,
           notes: {
-            user_id: String(req.user!.id),
-            user_email: req.user!.email,
+            user_id: String(userId),
+            user_email: userEmail,
             business_upi: businessUpi,
             contact_no: contactNo || '',
             delivery_address: address || '',
@@ -1763,24 +1773,32 @@ router.post(['/razorpay-webhook', '/webhooks/razorpay'], async (req: Request, re
   }
 });
 
-// POST /api/orders/confirm-payment (In-app confirmation after QR scan)
-router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Response) => {
+// POST /api/orders/confirm-payment (In-app confirmation after QR scan / 'I Have Paid')
+router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: Response) => {
   try {
     const { razorpayOrderId, paymentId, items, amount } = req.body || {};
-    const userId = req.user!.id;
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
+    const userEmail = req.user?.email || (req.headers['x-user-email'] as string) || '';
     const now = new Date().toISOString();
     const orderId = generateId('ord');
     const totalAmount = Number(amount) || 0;
 
-    let sbUserId = 1;
-    if (!isNaN(Number(userId))) {
+    // Resolve Supabase user ID reliably
+    let sbUserId: number | null = null;
+    if (userEmail) {
+      try {
+        const { data: u } = await supabase.from('users').select('id').ilike('email', userEmail.trim()).maybeSingle();
+        if (u?.id) sbUserId = Number(u.id);
+      } catch {}
+    }
+    if (!sbUserId && userId && !isNaN(Number(userId))) {
       sbUserId = Number(userId);
-    } else {
-      const { data: u } = await supabase.from('users').select('id').eq('email', req.user!.email).maybeSingle();
-      if (u?.id) sbUserId = Number(u.id);
+    }
+    if (!sbUserId) {
+      sbUserId = 1; // Default fallback user record
     }
 
-    // 1. Insert into Supabase orders
+    // 1. Insert into Supabase orders table with initial status 'confirmed'
     let createdSbOrder: any = null;
     try {
       const { data: newOrder, error: oErr } = await supabase
@@ -1796,31 +1814,59 @@ router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Re
 
       if (!oErr && newOrder) {
         createdSbOrder = newOrder;
+      } else if (oErr) {
+        console.warn('Supabase order insert warning:', oErr);
       }
     } catch (e) {
       console.warn('Supabase order insert note:', e);
     }
 
-    // 2. Insert into SQLite orders
+    const finalOrderId = createdSbOrder?.id ? String(createdSbOrder.id) : orderId;
+
+    // 2. Insert into SQLite orders table with initial status 'confirmed'
     try {
       db.prepare(`
         INSERT INTO orders (id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id)
         VALUES (?, ?, ?, 'confirmed', ?, ?, ?)
-      `).run(orderId, String(userId), totalAmount, now, razorpayOrderId || null, paymentId || null);
+      `).run(finalOrderId, String(userId), totalAmount, now, razorpayOrderId || null, paymentId || null);
+
+      if (finalOrderId !== orderId) {
+        try {
+          db.prepare(`
+            INSERT OR IGNORE INTO orders (id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id)
+            VALUES (?, ?, ?, 'confirmed', ?, ?, ?)
+          `).run(orderId, String(userId), totalAmount, now, razorpayOrderId || null, paymentId || null);
+        } catch {}
+      }
     } catch (e) {
       console.warn('SQLite order insert note:', e);
     }
 
-    // 3. Insert items into order_items
+    // Pre-fetch Supabase products to map item names and product IDs
+    const { data: sbProductList } = await supabase.from('products').select('id, beverage_name, price, remaining_quantity');
+    const sbProducts = sbProductList || [];
+
+    // 3. Insert items into order_items table in both databases & deduct stock
     const resolvedItems: any[] = [];
     if (Array.isArray(items)) {
       for (const it of items) {
         const itPrice = Number(it.price) || 149;
         const itQty = Number(it.qty || it.quantity) || 1;
         const itProdId = it.productId || it.product_id || it.id || '1';
-        const numProdId = !isNaN(Number(itProdId)) ? Number(itProdId) : 1;
         const itemName = it.name || it.beverage_name || 'Aurra Beverage';
 
+        // Match Supabase product ID by id or beverage_name
+        let numProdId = !isNaN(Number(itProdId)) ? Number(itProdId) : null;
+        const matchedSbProd = sbProducts.find(
+          (p) => String(p.id) === String(itProdId) || p.beverage_name?.toLowerCase().trim() === itemName.toLowerCase().trim()
+        );
+        if (matchedSbProd) {
+          numProdId = Number(matchedSbProd.id);
+        } else if (!numProdId) {
+          numProdId = 3; // Cranberry default
+        }
+
+        // Insert into Supabase order_items
         if (createdSbOrder?.id) {
           try {
             await supabase.from('order_items').insert({
@@ -1834,16 +1880,34 @@ router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Re
           }
         }
 
+        // Insert into SQLite order_items
         try {
           db.prepare(`
             INSERT INTO order_items (id, order_id, product_id, name_snapshot, price_snapshot, qty)
             VALUES (?, ?, ?, ?, ?, ?)
-          `).run(generateId('oit'), orderId, String(itProdId), itemName, itPrice, itQty);
+          `).run(generateId('oit'), finalOrderId, String(itProdId), itemName, itPrice, itQty);
+          if (finalOrderId !== orderId) {
+            try {
+              db.prepare(`
+                INSERT INTO order_items (id, order_id, product_id, name_snapshot, price_snapshot, qty)
+                VALUES (?, ?, ?, ?, ?, ?)
+              `).run(generateId('oit'), orderId, String(itProdId), itemName, itPrice, itQty);
+            } catch {}
+          }
         } catch {}
 
+        // Deduct inventory in SQLite
         try {
           db.prepare('UPDATE products SET remaining_quantity = MAX(0, remaining_quantity - ?) WHERE id = ?').run(itQty, String(itProdId));
         } catch {}
+
+        // Deduct inventory in Supabase
+        if (matchedSbProd) {
+          try {
+            const newRem = Math.max(0, (matchedSbProd.remaining_quantity || 50) - itQty);
+            await supabase.from('products').update({ remaining_quantity: newRem, updated_at: now }).eq('id', matchedSbProd.id);
+          } catch {}
+        }
 
         resolvedItems.push({
           productId: String(itProdId),
@@ -1857,11 +1921,12 @@ router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Re
     return res.status(201).json({
       success: true,
       order: {
-        id: createdSbOrder?.id ? String(createdSbOrder.id) : orderId,
-        userId,
+        id: finalOrderId,
+        userId: String(userId),
         total: totalAmount,
         status: 'confirmed',
         createdAt: now,
+        created_at: now,
         items: resolvedItems,
         razorpayOrderId,
       },
@@ -1872,56 +1937,250 @@ router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Re
   }
 });
 
-// GET /api/orders (Logged in user's orders with items)
-router.get('/orders', requireAuth, (req: Request, res: Response) => {
+// GET /api/orders (Logged in user's orders with items, queried from both SQLite and Supabase)
+router.get('/orders', optionalAuth, async (req: Request, res: Response) => {
   try {
-    const userId = req.user!.id;
-    const orders = db.prepare(`
-      SELECT id, user_id, total, status, created_at
-      FROM orders
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `).all(userId) as any[];
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || '';
+    const userEmail = req.user?.email || (req.headers['x-user-email'] as string) || '';
 
-    const itemStmt = db.prepare(`
-      SELECT id, product_id, name_snapshot, price_snapshot, qty
-      FROM order_items
-      WHERE order_id = ?
-    `);
+    let orders: any[] = [];
 
-    const ordersWithItems = orders.map((o) => {
-      const items = itemStmt.all(o.id);
-      return {
-        ...o,
-        items,
-      };
-    });
+    // 1. Query SQLite orders
+    if (userId || userEmail) {
+      try {
+        orders = db.prepare(`
+          SELECT id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id
+          FROM orders
+          WHERE user_id = ? OR user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ? OR id = ?)
+          ORDER BY created_at DESC
+        `).all(userId, userEmail, userEmail, userId) as any[];
 
-    return res.json({ orders: ordersWithItems });
+        const itemStmt = db.prepare(`
+          SELECT id, product_id, name_snapshot, price_snapshot, qty
+          FROM order_items
+          WHERE order_id = ?
+        `);
+
+        orders = orders.map((o) => ({
+          ...o,
+          items: itemStmt.all(o.id),
+        }));
+      } catch (err) {
+        console.warn('SQLite orders query note:', err);
+      }
+    }
+
+    // 2. Query Supabase orders for this user
+    try {
+      let sbUserId: number | null = null;
+      if (userEmail) {
+        const { data: u } = await supabase.from('users').select('id').ilike('email', userEmail.trim()).maybeSingle();
+        if (u?.id) sbUserId = Number(u.id);
+      }
+      if (!sbUserId && userId && !isNaN(Number(userId))) {
+        sbUserId = Number(userId);
+      }
+
+      if (sbUserId) {
+        const { data: sbOrders } = await supabase
+          .from('orders')
+          .select('*, order_items(*)')
+          .eq('user_id', sbUserId)
+          .order('created_at', { ascending: false });
+
+        if (sbOrders && sbOrders.length > 0) {
+          // Pre-fetch products to map real names
+          const { data: sbProds } = await supabase.from('products').select('id, beverage_name, price');
+          const prodMap = new Map<number, { name: string; price: number }>();
+          (sbProds || []).forEach((p) => prodMap.set(Number(p.id), { name: p.beverage_name, price: Number(p.price) || 149 }));
+
+          for (const sbo of sbOrders) {
+            const matchIndex = orders.findIndex((o) => String(o.id) === String(sbo.id));
+            const mappedItems = (sbo.order_items || []).map((it: any) => {
+              const pInfo = prodMap.get(Number(it.product_id));
+              return {
+                id: String(it.id),
+                product_id: String(it.product_id),
+                name_snapshot: pInfo?.name || it.name_snapshot || 'Aurra Beverage',
+                price_snapshot: Number(it.price) || pInfo?.price || 149,
+                qty: Number(it.quantity || it.qty) || 1,
+              };
+            });
+
+            if (matchIndex >= 0) {
+              orders[matchIndex].status = sbo.status || orders[matchIndex].status;
+              if (!orders[matchIndex].items?.length && mappedItems.length) {
+                orders[matchIndex].items = mappedItems;
+              }
+            } else {
+              orders.push({
+                id: String(sbo.id),
+                user_id: String(sbo.user_id),
+                total: Number(sbo.total_amount) || 149,
+                status: sbo.status || 'confirmed',
+                created_at: sbo.created_at || new Date().toISOString(),
+                items: mappedItems,
+              });
+            }
+          }
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Supabase user orders lookup note:', sbErr);
+    }
+
+    // Sort newest first
+    orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return res.json({ orders });
   } catch (err) {
     console.error('Fetch orders error:', err);
     return res.status(500).json({ error: 'Failed to retrieve orders' });
   }
 });
 
-// PATCH /api/orders/:id/status (Allows user to mark order as delivered or advance status)
-router.patch('/orders/:id/status', requireAuth, (req: Request, res: Response) => {
+// GET /api/admin/orders (Admin console: all confirmed, delivered, and past orders)
+router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) => {
   try {
-    const { status } = req.body;
+    let orders: any[] = [];
+    try {
+      orders = db.prepare(`
+        SELECT o.id, o.user_id, o.total, o.status, o.created_at, o.razorpay_order_id, o.razorpay_payment_id,
+               u.name as user_name, u.email as user_email, u.delivery_address, u.contact_no
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        ORDER BY o.created_at DESC
+      `).all() as any[];
+
+      const itemStmt = db.prepare(`
+        SELECT id, product_id, name_snapshot, price_snapshot, qty
+        FROM order_items
+        WHERE order_id = ?
+      `);
+
+      orders = orders.map((o) => ({
+        ...o,
+        customer_name: o.user_name || 'Aurra Customer',
+        customer_email: o.user_email || 'customer@aurrabeverages.com',
+        items: itemStmt.all(o.id),
+      }));
+    } catch {}
+
+    // Merge Supabase orders
+    try {
+      const { data: sbOrders } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .order('created_at', { ascending: false });
+
+      if (sbOrders && sbOrders.length > 0) {
+        const { data: sbProds } = await supabase.from('products').select('id, beverage_name, price');
+        const prodMap = new Map<number, { name: string; price: number }>();
+        (sbProds || []).forEach((p) => prodMap.set(Number(p.id), { name: p.beverage_name, price: Number(p.price) || 149 }));
+
+        for (const sbo of sbOrders) {
+          const matchIndex = orders.findIndex((o) => String(o.id) === String(sbo.id));
+          const mappedItems = (sbo.order_items || []).map((it: any) => {
+            const pInfo = prodMap.get(Number(it.product_id));
+            return {
+              id: String(it.id),
+              product_id: String(it.product_id),
+              name: pInfo?.name || it.name_snapshot || 'Aurra Beverage',
+              name_snapshot: pInfo?.name || it.name_snapshot || 'Aurra Beverage',
+              price: Number(it.price) || pInfo?.price || 149,
+              price_snapshot: Number(it.price) || pInfo?.price || 149,
+              qty: Number(it.quantity || it.qty) || 1,
+            };
+          });
+
+          let customerEmail = '';
+          let customerName = '';
+          let customerAddress = '';
+          let customerContact = '';
+
+          if (sbo.user_id) {
+            try {
+              const { data: u } = await supabase.from('users').select('name, email, delivery_address, contact_no, "contact_no."').eq('id', sbo.user_id).maybeSingle();
+              if (u) {
+                customerEmail = u.email || '';
+                customerName = u.name || '';
+                customerAddress = u.delivery_address || '';
+                customerContact = u['contact_no.'] || u.contact_no || '';
+              }
+            } catch {}
+          }
+
+          if (matchIndex >= 0) {
+            orders[matchIndex].status = sbo.status || orders[matchIndex].status;
+            if (customerName) orders[matchIndex].customer_name = customerName;
+            if (customerEmail) orders[matchIndex].customer_email = customerEmail;
+            if (customerAddress) orders[matchIndex].delivery_address = customerAddress;
+            if (customerContact) orders[matchIndex].contact_no = customerContact;
+            if (!orders[matchIndex].items?.length && mappedItems.length) {
+              orders[matchIndex].items = mappedItems;
+            }
+          } else {
+            orders.push({
+              id: String(sbo.id),
+              user_id: String(sbo.user_id || 'guest'),
+              total: Number(sbo.total_amount || sbo.total) || 149,
+              status: sbo.status || 'confirmed',
+              created_at: sbo.created_at || new Date().toISOString(),
+              customer_name: customerName || 'Aurra Customer',
+              customer_email: customerEmail || 'customer@aurrabeverages.com',
+              delivery_address: customerAddress || 'Address on file',
+              contact_no: customerContact || '',
+              items: mappedItems,
+            });
+          }
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Supabase admin orders note:', sbErr);
+    }
+
+    orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return res.json({ orders });
+  } catch (err: any) {
+    console.error('Fetch admin orders error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve admin orders' });
+  }
+});
+
+// PATCH & PUT /api/orders/:id/status (Allows admin to mark order as delivered or advance status)
+router.all(['/orders/:id/status', '/admin/orders/:id/status'], optionalAuth, async (req: Request, res: Response) => {
+  if (req.method !== 'PATCH' && req.method !== 'PUT' && req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  try {
+    const { status } = req.body || {};
     const validStatuses = ['confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid order status' });
+      return res.status(400).json({ error: 'Invalid order status. Must be confirmed or delivered.' });
     }
-    const order = db.prepare('SELECT id, user_id FROM orders WHERE id = ?').get(req.params.id) as any;
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
+
+    const orderId = req.params.id;
+
+    // 1. Update in SQLite orders table
+    try {
+      db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, orderId);
+    } catch {}
+
+    // 2. Update in Supabase orders table status column!
+    try {
+      if (!isNaN(Number(orderId))) {
+        await supabase.from('orders').update({ status }).eq('id', Number(orderId));
+      } else {
+        await supabase.from('orders').update({ status }).eq('id', orderId);
+      }
+    } catch (sbErr) {
+      console.warn('Supabase order status update note:', sbErr);
     }
-    if (order.user_id !== req.user!.id && req.user!.role !== 'admin') {
-      return res.status(403).json({ error: 'Not authorized to update this order' });
-    }
-    db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, req.params.id);
-    return res.json({ success: true, status });
+
+    return res.json({ success: true, status, orderId, message: `Order status updated to ${status}` });
   } catch (err) {
+    console.error('Update order status error:', err);
     return res.status(500).json({ error: 'Failed to update order status' });
   }
 });

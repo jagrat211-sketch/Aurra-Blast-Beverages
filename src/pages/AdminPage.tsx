@@ -20,7 +20,13 @@ import {
   Globe,
   Trash2,
   Crop,
-  X
+  X,
+  Package,
+  Truck,
+  MapPin,
+  Phone,
+  Calendar,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useFeatureFlags } from '../context/FeatureFlagContext';
@@ -45,7 +51,7 @@ export const AdminPage: React.FC = () => {
   const { isAuraTributeEnabled, toggleAuraTribute, setAuraTributeEnabled, loading: flagLoading } = useFeatureFlags();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'products' | 'events' | 'users' | 'sql' | 'features'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'events' | 'users' | 'sql' | 'features' | 'orders'>('products');
   
   // Modal for uploading and associating beverage images
   const [selectedProductForUpload, setSelectedProductForUpload] = useState<Product | null>(null);
@@ -87,6 +93,12 @@ export const AdminPage: React.FC = () => {
   const [usersList, setUsersList] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [userRoleFilter, setUserRoleFilter] = useState<'user' | 'admin' | 'all'>('user');
+
+  // Orders Management (6th Tab)
+  const [adminOrders, setAdminOrders] = useState<any[]>([]);
+  const [loadingAdminOrders, setLoadingAdminOrders] = useState(false);
+  const [adminOrderFilter, setAdminOrderFilter] = useState<'confirmed' | 'delivered' | 'all'>('confirmed');
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
 
   // Deleting product state & confirmation modal
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
@@ -151,10 +163,36 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  const loadAdminOrders = async () => {
+    setLoadingAdminOrders(true);
+    try {
+      const res = await api.getAdminOrders();
+      setAdminOrders(res.orders || []);
+    } catch (err) {
+      console.error('Failed to load admin orders:', err);
+    } finally {
+      setLoadingAdminOrders(false);
+    }
+  };
+
+  const handleMarkDelivered = async (orderId: string) => {
+    setUpdatingOrderId(orderId);
+    try {
+      await api.updateOrderStatus(orderId, 'delivered');
+      await loadAdminOrders();
+      await loadOverview();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update order status');
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
   useEffect(() => {
     if (user?.role === 'admin') {
       loadOverview();
       loadProducts();
+      loadAdminOrders();
     }
   }, [user]);
 
@@ -163,6 +201,7 @@ export const AdminPage: React.FC = () => {
     if (activeTab === 'events') loadCartEvents();
     if (activeTab === 'users') loadUsers();
     if (activeTab === 'products') loadProducts();
+    if (activeTab === 'orders') loadAdminOrders();
   }, [activeTab]);
 
   // Handle local image file upload (converts to high-quality base64 data URL)
@@ -381,6 +420,7 @@ export const AdminPage: React.FC = () => {
             if (activeTab === 'events') loadCartEvents();
             if (activeTab === 'users') loadUsers();
             if (activeTab === 'products') loadProducts();
+            if (activeTab === 'orders') loadAdminOrders();
           }}
           className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
@@ -427,10 +467,10 @@ export const AdminPage: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="mt-8 flex border-b border-slate-200 dark:border-slate-800 gap-6 text-sm font-semibold">
+      <div className="mt-8 flex border-b border-slate-200 dark:border-slate-800 gap-6 text-sm font-semibold overflow-x-auto">
         <button
           onClick={() => setActiveTab('products')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'products'
               ? 'border-amber-500 text-amber-600 dark:text-amber-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -442,7 +482,7 @@ export const AdminPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('events')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'events'
               ? 'border-amber-500 text-amber-600 dark:text-amber-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -454,7 +494,7 @@ export const AdminPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('users')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'users'
               ? 'border-amber-500 text-amber-600 dark:text-amber-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -466,7 +506,7 @@ export const AdminPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('sql')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'sql'
               ? 'border-amber-500 text-amber-600 dark:text-amber-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -478,7 +518,7 @@ export const AdminPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('features')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 ${
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'features'
               ? 'border-amber-500 text-amber-600 dark:text-amber-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -488,6 +528,25 @@ export const AdminPage: React.FC = () => {
           <span>Feature Settings</span>
           <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.2 text-[9px] font-black text-emerald-700 dark:text-emerald-300">
             5th Tab
+          </span>
+        </button>
+
+        {/* 6th Tab: Orders Management */}
+        <button
+          onClick={() => {
+            setActiveTab('orders');
+            loadAdminOrders();
+          }}
+          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'orders'
+              ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Package className="h-4 w-4" />
+          <span>Orders Management</span>
+          <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.2 text-[9px] font-black text-amber-700 dark:text-amber-300">
+            6th Tab
           </span>
         </button>
       </div>
@@ -1297,6 +1356,271 @@ export const AdminPage: React.FC = () => {
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* TAB 6: Orders Management (Beside 5th Tab) */}
+      {activeTab === 'orders' && (
+        <div className="mt-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Customer Orders &amp; Fulfillment</h2>
+                <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-2 py-0.5 text-[10px] font-black text-amber-700 dark:text-amber-300">
+                  6th Tab
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Track customer delivery addresses, verify confirmed orders, and mark them as delivered to sync database status
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={loadAdminOrders}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition-colors shadow-xs"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loadingAdminOrders ? 'animate-spin' : ''}`} />
+                <span>Sync Orders</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filter Pills Bar (Confirmed is Default) */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 w-fit">
+            <button
+              type="button"
+              onClick={() => setAdminOrderFilter('confirmed')}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                adminOrderFilter === 'confirmed'
+                  ? 'bg-amber-500 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span>Confirmed Orders</span>
+              <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                adminOrderFilter === 'confirmed' ? 'bg-white/20 text-white' : 'bg-amber-200/60 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+              }`}>
+                {adminOrders.filter((o) => o.status === 'confirmed' || (o.status !== 'delivered' && o.status !== 'cancelled')).length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminOrderFilter('delivered')}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                adminOrderFilter === 'delivered'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>Delivered Orders</span>
+              <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                adminOrderFilter === 'delivered' ? 'bg-white/20 text-white' : 'bg-emerald-200/60 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+              }`}>
+                {adminOrders.filter((o) => o.status === 'delivered').length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminOrderFilter('all')}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                adminOrderFilter === 'all'
+                  ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              <Package className="h-3.5 w-3.5" />
+              <span>All Orders ({adminOrders.length})</span>
+            </button>
+          </div>
+
+          {/* Orders Listing Table */}
+          {loadingAdminOrders ? (
+            <div className="py-20 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+              <RefreshCw className="h-7 w-7 animate-spin text-amber-500" />
+              <span>Loading orders records...</span>
+            </div>
+          ) : (
+            (() => {
+              const filteredList = adminOrders.filter((o) => {
+                if (adminOrderFilter === 'confirmed') {
+                  return o.status === 'confirmed' || (o.status !== 'delivered' && o.status !== 'cancelled');
+                }
+                if (adminOrderFilter === 'delivered') {
+                  return o.status === 'delivered';
+                }
+                return true;
+              });
+
+              if (filteredList.length === 0) {
+                return (
+                  <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
+                    <Package className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      {adminOrderFilter === 'confirmed'
+                        ? 'No confirmed orders awaiting delivery'
+                        : adminOrderFilter === 'delivered'
+                        ? 'No delivered orders found'
+                        : 'No orders recorded yet'}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {adminOrderFilter === 'confirmed'
+                        ? 'New customer orders placed through the checkout will appear here automatically.'
+                        : 'Fulfilled orders will appear here once marked as delivered.'}
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  {filteredList.map((ord: any) => {
+                    const isDelivered = ord.status === 'delivered';
+                    const dateFormatted = ord.created_at
+                      ? new Date(ord.created_at).toLocaleString('en-IN', {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })
+                      : 'Recently';
+
+                    return (
+                      <div
+                        key={ord.id}
+                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all hover:border-amber-300/60 dark:hover:border-amber-700/60"
+                      >
+                        {/* Order Header Bar */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                              #{ord.id}
+                            </span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {dateFormatted}
+                            </span>
+
+                            {/* Status Column / Badge */}
+                            {isDelivered ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200/60">
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span>Delivered</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/60">
+                                <Clock className="h-3 w-3 text-amber-600 animate-pulse" />
+                                <span>Confirmed (Pending Delivery)</span>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Action Button: Mark as Delivered */}
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <span className="text-[10px] font-bold text-slate-400 block uppercase">Order Total</span>
+                              <span className="text-base font-black text-slate-900 dark:text-white tabular-nums">
+                                ₹{ord.total}
+                              </span>
+                            </div>
+
+                            {!isDelivered ? (
+                              <button
+                                type="button"
+                                disabled={updatingOrderId === ord.id}
+                                onClick={() => handleMarkDelivered(ord.id)}
+                                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {updatingOrderId === ord.id ? (
+                                  <>
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                    <span>Updating...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="h-3.5 w-3.5" />
+                                    <span>Mark as Delivered</span>
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                <span>Fulfilled</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Customer Delivery Details Strip */}
+                        <div className="mt-3.5 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-slate-50/70 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <div>
+                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1">
+                              Customer Contact
+                            </span>
+                            <div className="font-bold text-slate-800 dark:text-slate-200">
+                              {ord.customer_name || 'Aurra Customer'}
+                            </div>
+                            <div className="text-slate-500 dark:text-slate-400 truncate">
+                              {ord.customer_email || 'customer@aurrabeverages.com'}
+                            </div>
+                            {ord.contact_no && (
+                              <div className="mt-1 flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                                <Phone className="h-3 w-3" />
+                                <span>+91 {ord.contact_no}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1">
+                              Delivery Address
+                            </span>
+                            <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
+                              <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                              <span className="font-semibold leading-relaxed">
+                                {ord.delivery_address || 'No street address provided'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Ordered Items Preview */}
+                        {ord.items && ord.items.length > 0 && (
+                          <div className="mt-3 pt-2">
+                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1.5">
+                              Ordered Beverages ({ord.items.length})
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {ord.items.map((it: any, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="inline-flex items-center gap-2 rounded-lg bg-white dark:bg-slate-800 px-2.5 py-1 text-xs border border-slate-200/70 dark:border-slate-700"
+                                >
+                                  <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[10px] font-black">
+                                    {it.qty || it.quantity || 1}x
+                                  </span>
+                                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                    {it.name || it.name_snapshot || 'Beverage'}
+                                  </span>
+                                  <span className="font-bold text-slate-500 tabular-nums text-[11px]">
+                                    ₹{(Number(it.price || it.price_snapshot) || 149) * (Number(it.qty || it.quantity) || 1)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()
+          )}
         </div>
       )}
 

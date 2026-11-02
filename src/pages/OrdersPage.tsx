@@ -25,9 +25,10 @@ import { SettingsModal } from '../components/SettingsModal';
 export const OrdersPage: React.FC = () => {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'past' ? 'past' : 'current';
+  const tabQuery = searchParams.get('tab');
+  const initialTab = (tabQuery === 'completed' || tabQuery === 'past') ? 'completed' : 'pending';
 
-  const [activeTab, setActiveTab] = useState<'current' | 'past'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'pending' | 'completed'>(initialTab);
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
@@ -40,12 +41,14 @@ export const OrdersPage: React.FC = () => {
   // Sync tab with URL query parameter
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'past' || tabParam === 'current') {
-      setActiveTab(tabParam);
+    if (tabParam === 'completed' || tabParam === 'past') {
+      setActiveTab('completed');
+    } else if (tabParam === 'pending' || tabParam === 'current') {
+      setActiveTab('pending');
     }
   }, [searchParams]);
 
-  const handleTabChange = (tab: 'current' | 'past') => {
+  const handleTabChange = (tab: 'pending' | 'completed') => {
     setActiveTab(tab);
     setSearchParams({ tab });
   };
@@ -120,13 +123,17 @@ export const OrdersPage: React.FC = () => {
     openCart();
   };
 
-  // Split into Current vs Past orders
-  const currentOrders = orders.filter(
+  // Split into Pending vs Completed orders
+  // If order is confirmed & pending to deliver -> show in pending orders
+  // If marked status as delivered -> show in completed orders
+  const pendingOrders = orders.filter(
     (o) => o.status !== 'delivered' && o.status !== 'cancelled'
   );
-  const pastOrders = orders.filter(
-    (o) => o.status === 'delivered' || o.status === 'cancelled'
+  const completedOrders = orders.filter(
+    (o) => o.status === 'delivered'
   );
+  const currentOrders = pendingOrders; // Aliased for seamless compatibility
+  const pastOrders = completedOrders;
 
   return (
     <div className="min-h-screen py-10 sm:py-16">
@@ -174,22 +181,22 @@ export const OrdersPage: React.FC = () => {
                 My Orders
               </h1>
               <p className="mt-1 text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-xl">
-                Track your active cold-chain shipments under Current Orders, or review past invoices and reorder your favorite flavors anytime.
+                Track your active shipments in Pending Orders, or review fulfilled shipments in Completed Orders.
               </p>
             </div>
 
             {/* Quick Metrics */}
             <div className="flex items-center gap-2 self-start sm:self-auto">
               <div className="rounded-2xl bg-white/90 p-3 text-center dark:bg-slate-800/90 border border-amber-200/40 dark:border-slate-700 shadow-xs min-w-[90px]">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Current</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending</span>
                 <span className="text-lg font-black text-amber-600 dark:text-amber-400 tabular-nums">
-                  {currentOrders.length}
+                  {pendingOrders.length}
                 </span>
               </div>
               <div className="rounded-2xl bg-white/90 p-3 text-center dark:bg-slate-800/90 border border-amber-200/40 dark:border-slate-700 shadow-xs min-w-[90px]">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Past</span>
-                <span className="text-lg font-black text-slate-800 dark:text-slate-200 tabular-nums">
-                  {pastOrders.length}
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Completed</span>
+                <span className="text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {completedOrders.length}
                 </span>
               </div>
             </div>
@@ -199,28 +206,28 @@ export const OrdersPage: React.FC = () => {
           <div className="mt-6 flex gap-2 border-t border-amber-200/40 pt-4 dark:border-slate-800">
             <button
               type="button"
-              onClick={() => handleTabChange('current')}
+              onClick={() => handleTabChange('pending')}
               className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all cursor-pointer ${
-                activeTab === 'current'
+                activeTab === 'pending'
                   ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
                   : 'bg-white/80 text-slate-700 hover:bg-white dark:bg-slate-800/80 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700'
               }`}
             >
               <Clock className="h-4 w-4" />
-              <span>Current Orders ({currentOrders.length})</span>
+              <span>Pending Orders ({pendingOrders.length})</span>
             </button>
 
             <button
               type="button"
-              onClick={() => handleTabChange('past')}
+              onClick={() => handleTabChange('completed')}
               className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all cursor-pointer ${
-                activeTab === 'past'
-                  ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
+                activeTab === 'completed'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                   : 'bg-white/80 text-slate-700 hover:bg-white dark:bg-slate-800/80 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700'
               }`}
             >
               <CheckCircle2 className="h-4 w-4" />
-              <span>Past Orders ({pastOrders.length})</span>
+              <span>Completed Orders ({completedOrders.length})</span>
             </button>
           </div>
         </div>
@@ -245,16 +252,16 @@ export const OrdersPage: React.FC = () => {
             <RefreshCw className="h-7 w-7 animate-spin text-amber-500" />
             <span>Fetching order records...</span>
           </div>
-        ) : activeTab === 'current' ? (
-          /* TAB 1: CURRENT ORDERS */
-          currentOrders.length === 0 ? (
+        ) : activeTab === 'pending' ? (
+          /* TAB 1: PENDING ORDERS */
+          pendingOrders.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 text-amber-500 dark:bg-amber-950/40 mb-3">
                 <Clock className="h-7 w-7" />
               </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">No active current orders</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">No pending orders</h3>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                You do not have any orders in transit right now. Choose any of our 7 signature fruit energy sparklers to place a new order.
+                You do not have any pending orders waiting for delivery right now.
               </p>
               <Link
                 to="/"
@@ -266,7 +273,7 @@ export const OrdersPage: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-6">
-              {currentOrders.map((ord) => {
+              {pendingOrders.map((ord) => {
                 const dateString = new Date(ord.created_at).toLocaleString('en-IN', {
                   dateStyle: 'medium',
                   timeStyle: 'short',
@@ -289,9 +296,9 @@ export const OrdersPage: React.FC = () => {
                           <Calendar className="h-3.5 w-3.5 text-slate-400" />
                           {dateString}
                         </span>
-                        <span className="rounded-full bg-amber-500/15 px-3 py-0.5 text-[11px] font-black text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border border-amber-400/30 flex items-center gap-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                          {ord.status.replace(/_/g, ' ').toUpperCase()}
+                        <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[11px] font-black text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border border-amber-400/30 flex items-center gap-1.5">
+                          <Clock className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
+                          <span>Pending Delivery</span>
                         </span>
                       </div>
 
@@ -406,20 +413,20 @@ export const OrdersPage: React.FC = () => {
             </div>
           )
         ) : (
-          /* TAB 2: PAST ORDERS */
-          pastOrders.length === 0 ? (
+          /* TAB 2: COMPLETED ORDERS */
+          completedOrders.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500 dark:bg-emerald-950/40 mb-3">
                 <CheckCircle2 className="h-7 w-7" />
               </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">No fulfilled past orders</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">No completed orders yet</h3>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                Completed and delivered orders will be saved here for one-click reordering and billing records.
+                Completed and delivered orders will be saved here once fulfilled by the store.
               </p>
             </div>
           ) : (
             <div className="space-y-4">
-              {pastOrders.map((ord) => {
+              {completedOrders.map((ord) => {
                 const dateString = new Date(ord.created_at).toLocaleString('en-IN', {
                   dateStyle: 'medium',
                   timeStyle: 'short',

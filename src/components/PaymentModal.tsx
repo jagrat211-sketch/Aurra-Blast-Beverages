@@ -15,6 +15,8 @@ import {
   MapPin,
   Phone,
   RefreshCw,
+  Edit2,
+  Save,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../context/AuthContext';
@@ -29,7 +31,7 @@ interface PaymentModalProps {
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onSuccess }) => {
-  const { user } = useAuth();
+  const { user, updateDeliveryInfo } = useAuth();
   const { items, getGrandTotal, clearCart, closeCart } = useCartStore();
 
   const [loadingQr, setLoadingQr] = useState(false);
@@ -42,6 +44,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
   const [qrTimeLeft, setQrTimeLeft] = useState(300); // 5 minutes validity
   const [processingPayment, setProcessingPayment] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [isEditingDelivery, setIsEditingDelivery] = useState(false);
+  const [editAddress, setEditAddress] = useState(user?.delivery_address || '');
+  const [editContact, setEditContact] = useState(user?.contact_no || '');
+  const [savingDelivery, setSavingDelivery] = useState(false);
+
+  // Synchronize initial address if user loads later
+  useEffect(() => {
+    if (user?.delivery_address && !editAddress) setEditAddress(user.delivery_address);
+    if (user?.contact_no && !editContact) setEditContact(user.contact_no);
+  }, [user]);
 
   const grandTotal = getGrandTotal();
 
@@ -267,23 +280,99 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
             </span>
           </div>
 
-          {/* Confirmed Delivery Info Summary */}
-          {(user?.delivery_address || user?.contact_no) && (
-            <div className="mt-2.5 pt-2 border-t border-amber-200/50 dark:border-amber-900/40 text-[11px] text-slate-700 dark:text-slate-300 space-y-1">
-              {user.delivery_address && (
-                <div className="flex items-center gap-1.5 truncate">
-                  <MapPin className="h-3 w-3 text-amber-600 shrink-0" />
-                  <span className="truncate">{user.delivery_address}</span>
+          {/* Confirmed Delivery Info Summary & Editable Section */}
+          <div className="mt-2.5 pt-2 border-t border-amber-200/50 dark:border-amber-900/40 text-[11px] text-slate-700 dark:text-slate-300">
+            {isEditingDelivery ? (
+              <div className="space-y-2 py-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-900 dark:text-amber-300 text-[11px] flex items-center gap-1">
+                    <MapPin className="h-3 w-3 text-amber-600" />
+                    Update Delivery Information
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingDelivery(false)}
+                    className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold"
+                  >
+                    Cancel
+                  </button>
                 </div>
-              )}
-              {user.contact_no && (
-                <div className="flex items-center gap-1.5">
-                  <Phone className="h-3 w-3 text-emerald-600 shrink-0" />
-                  <span>+91 {user.contact_no}</span>
+                <div>
+                  <input
+                    type="text"
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    placeholder="Enter complete delivery address (street, area, city, pincode)"
+                    className="w-full rounded-lg border border-amber-300/60 dark:border-amber-800 bg-white/90 dark:bg-slate-900/90 px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
                 </div>
-              )}
-            </div>
-          )}
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs font-semibold">+91</span>
+                    <input
+                      type="tel"
+                      value={editContact}
+                      onChange={(e) => setEditContact(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      placeholder="10-digit mobile number"
+                      className="w-full rounded-lg border border-amber-300/60 dark:border-amber-800 bg-white/90 dark:bg-slate-900/90 pl-10 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingDelivery || !editAddress.trim()}
+                    onClick={async () => {
+                      try {
+                        setSavingDelivery(true);
+                        await updateDeliveryInfo(editAddress.trim(), editContact.trim());
+                        setIsEditingDelivery(false);
+                      } catch (err: any) {
+                        setError(err.message || 'Failed to update address');
+                      } finally {
+                        setSavingDelivery(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-sm"
+                  >
+                    {savingDelivery ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Save className="h-3 w-3" />
+                    )}
+                    <span>Save</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                    <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {user?.delivery_address || 'No address set yet'}
+                    </span>
+                  </div>
+                  {user?.contact_no && (
+                    <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                      <Phone className="h-3 w-3 text-emerald-600 shrink-0" />
+                      <span>+91 {user.contact_no}</span>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditAddress(user?.delivery_address || '');
+                    setEditContact(user?.contact_no || '');
+                    setIsEditingDelivery(true);
+                  }}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md bg-amber-200/60 dark:bg-amber-950/60 px-2 py-1 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-300/80 transition-colors"
+                >
+                  <Edit2 className="h-2.5 w-2.5" />
+                  <span>{user?.delivery_address ? 'Edit Address' : 'Add Address'}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Dynamic QR Display Section */}

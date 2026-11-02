@@ -378,8 +378,8 @@ export const ShopPage: React.FC = () => {
         order={confirmedOrder}
         onClose={() => setConfirmedOrder(null)}
         onViewOrders={() => {
-          // Navigates directly to dedicated /orders route
-          window.location.href = '/orders?tab=current';
+          // Navigates directly to dedicated /orders route with pending orders tab
+          window.location.href = '/orders?tab=pending';
         }}
       />
 

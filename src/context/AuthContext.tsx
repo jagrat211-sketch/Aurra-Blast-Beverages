@@ -69,6 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
@@ -86,6 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
@@ -110,6 +112,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
@@ -119,6 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
@@ -128,6 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
@@ -137,6 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res as { success: boolean; user: User };
   };
@@ -146,6 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
+      try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
     }
     return res;
   };
