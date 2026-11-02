@@ -146,11 +146,28 @@ export function initDatabase() {
     if (!colNames.includes('delivery_address')) {
       db.prepare("ALTER TABLE users ADD COLUMN delivery_address TEXT").run();
     }
+    if (!colNames.includes('contact_no')) {
+      db.prepare("ALTER TABLE users ADD COLUMN contact_no TEXT").run();
+    }
     if (!colNames.includes('updated_at')) {
       db.prepare("ALTER TABLE users ADD COLUMN updated_at TEXT").run();
     }
   } catch (err) {
     console.warn('User table migration warning:', err);
+  }
+
+  // Migrate columns for orders table
+  try {
+    const orderCols = db.prepare("PRAGMA table_info(orders)").all() as { name: string }[];
+    const oColNames = orderCols.map((c) => c.name);
+    if (!oColNames.includes('razorpay_order_id')) {
+      db.prepare("ALTER TABLE orders ADD COLUMN razorpay_order_id TEXT").run();
+    }
+    if (!oColNames.includes('razorpay_payment_id')) {
+      db.prepare("ALTER TABLE orders ADD COLUMN razorpay_payment_id TEXT").run();
+    }
+  } catch (err) {
+    console.warn('Orders table migration warning:', err);
   }
 
   // Migrate columns for products table (Inventory & Stock Management)

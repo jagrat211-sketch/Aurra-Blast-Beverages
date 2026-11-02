@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
 import { db } from './db.js';
 import {
   hashPassword,
@@ -416,26 +418,30 @@ router.post('/auth/logout', (_req: Request, res: Response) => {
 router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
   let user: any = null;
   try {
-    user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+    user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
   } catch {
     user = null;
   }
 
-  // Also query latest user_profile from Supabase
-  let sbProfile: string | null = null;
+  // Also query latest user_profile, delivery_address, and contact_no from Supabase
+  let sbUser: any = null;
   try {
-    const { data: sbUser } = await supabase.from('users').select('user_profile, avatar_url').eq('email', req.user!.email).maybeSingle();
-    if (sbUser?.user_profile || sbUser?.avatar_url) {
-      sbProfile = sbUser.user_profile || sbUser.avatar_url;
-    }
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', req.user!.email)
+      .maybeSingle();
+    sbUser = data;
   } catch {}
 
-  const finalProfile = sbProfile || user?.user_profile || user?.avatar_url || req.user!.avatar_url || null;
+  const finalProfile = sbUser?.user_profile || sbUser?.avatar_url || user?.user_profile || user?.avatar_url || req.user!.avatar_url || null;
+  const finalAddress = sbUser?.delivery_address || user?.delivery_address || req.user!.delivery_address || null;
+  const finalContact = sbUser?.['contact_no.'] || sbUser?.contact_no || user?.contact_no || (req.user as any)!.contact_no || null;
 
   return res.json({
     user: {
-      id: user?.id || req.user!.id,
-      name: user?.name || req.user!.name,
+      id: user?.id || (sbUser ? String(sbUser.id) : req.user!.id),
+      name: sbUser?.name || user?.name || req.user!.name,
       email: user?.email || req.user!.email,
       role: user?.role || req.user!.role,
       email_verified: 1,
@@ -443,7 +449,8 @@ router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
       updated_at: user?.updated_at || null,
       avatar_url: finalProfile,
       user_profile: finalProfile,
-      delivery_address: user?.delivery_address || req.user!.delivery_address || null,
+      delivery_address: finalAddress,
+      contact_no: finalContact,
       parent_id: user?.parent_id || req.user!.parent_id || 'AURRA-DIST-IND-01',
     },
   });
@@ -694,10 +701,9 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
           .from('users')
           .update({
             user_profile: null,
-            avatar_url: null,
             updated_at: now,
           })
-          .eq('email', req.user!.email);
+          .ilike('email', req.user!.email.toLowerCase().trim());
       } catch (sbErr) {
         console.warn('Supabase profile removal notice:', sbErr);
       }
@@ -755,14 +761,14 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
 
     // 2. Update Supabase users table: user_profile column as requested
     try {
+      const cleanEmail = req.user!.email?.toLowerCase().trim();
       const { error: sbErr } = await supabase
         .from('users')
         .update({
           user_profile: finalProfileUrl,
-          avatar_url: finalProfileUrl,
           updated_at: now,
         })
-        .eq('email', req.user!.email);
+        .ilike('email', cleanEmail);
 
       if (sbErr) {
         console.warn('Supabase user_profile update warning:', sbErr);
@@ -1463,6 +1469,49 @@ router.post('/orders', requireAuth, async (req: Request, res: Response) => {
 
     createOrderTransaction();
 
+    // 4. Save to Supabase orders and order_items tables
+    try {
+      let sbUserId = 1;
+      if (!isNaN(Number(userId))) {
+        sbUserId = Number(userId);
+      } else {
+        const { data: u } = await supabase.from('users').select('id').eq('email', req.user!.email).maybeSingle();
+        if (u?.id) sbUserId = Number(u.id);
+      }
+
+      const { data: newSbOrder, error: oErr } = await supabase
+        .from('orders')
+        .insert({
+          user_id: sbUserId,
+          total_amount: serverTotal,
+          status: 'confirmed',
+          created_at: now,
+        })
+        .select()
+        .single();
+
+      if (!oErr && newSbOrder?.id) {
+        for (const item of resolvedItems) {
+          let numProdId = 1;
+          if (!isNaN(Number(item.productId))) {
+            numProdId = Number(item.productId);
+          } else {
+            const { data: p } = await supabase.from('products').select('id').ilike('beverage_name', item.name).maybeSingle();
+            if (p?.id) numProdId = Number(p.id);
+          }
+
+          await supabase.from('order_items').insert({
+            order_id: newSbOrder.id,
+            product_id: numProdId,
+            price: item.price,
+            quantity: item.qty,
+          });
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Supabase order persistence note:', sbErr);
+    }
+
     // Deduct stock in Supabase products table asynchronously
     for (const item of resolvedItems) {
       try {
@@ -1492,6 +1541,334 @@ router.post('/orders', requireAuth, async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Order creation error:', err);
     return res.status(500).json({ error: 'Failed to process order. Please try again.' });
+  }
+});
+
+// POST /api/razorpay/create-qr (Generates dynamic single-use UPI QR code linked to iamironman798@okaxis)
+router.post('/razorpay/create-qr', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { amount, items, contactNo, address } = req.body || {};
+    const grandTotal = Number(amount) || 0;
+    if (grandTotal <= 0) {
+      return res.status(400).json({ error: 'Order total must be greater than zero' });
+    }
+
+    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_TvKjTrYOGTa3u8';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'ZmrZH14WtFYpFyLzJJ75OzTq';
+    const businessUpi = process.env.RAZORPAY_BUSINESS_UPI || 'iamironman798@okaxis';
+
+    const receipt = `rcpt_${Date.now()}`;
+    let razorpayOrderId = `order_${Date.now()}`;
+
+    // 1. Create Razorpay order via official API
+    try {
+      const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+      const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: Math.round(grandTotal * 100), // paise
+          currency: 'INR',
+          receipt,
+          notes: {
+            user_id: String(req.user!.id),
+            user_email: req.user!.email,
+            business_upi: businessUpi,
+            contact_no: contactNo || '',
+            delivery_address: address || '',
+            items: JSON.stringify(items || []),
+          },
+        }),
+      });
+
+      if (rzpRes.ok) {
+        const rzpData = await rzpRes.json();
+        if (rzpData?.id) {
+          razorpayOrderId = rzpData.id;
+        }
+      } else {
+        console.warn('Razorpay order creation status:', rzpRes.status, await rzpRes.text());
+      }
+    } catch (rzpErr) {
+      console.warn('Razorpay API request error:', rzpErr);
+    }
+
+    // 2. Generate single-use dynamic UPI QR URL linked to business UPI ID (iamironman798@okaxis)
+    const upiString = `upi://pay?pa=${encodeURIComponent(businessUpi)}&pn=${encodeURIComponent('Aurra Blast Beverages')}&am=${grandTotal}&cu=INR&tn=${encodeURIComponent(`Aurra Order ${receipt}`)}&tr=${encodeURIComponent(razorpayOrderId)}`;
+
+    // 3. Render high-resolution scannable QR Code as Data URL
+    const qrCodeDataUrl = await QRCode.toDataURL(upiString, {
+      width: 360,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff',
+      },
+    });
+
+    return res.json({
+      success: true,
+      razorpayOrderId,
+      amount: grandTotal,
+      currency: 'INR',
+      businessUpi,
+      upiString,
+      qrCodeDataUrl,
+      receipt,
+    });
+  } catch (err: any) {
+    console.error('Create Razorpay QR error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to generate dynamic Razorpay QR code' });
+  }
+});
+
+// POST /api/razorpay-webhook (Webhook listener for payment.captured / qr_code.credited)
+router.post(['/razorpay-webhook', '/webhooks/razorpay'], async (req: Request, res: Response) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || 'aurrablastbeverages@12345!';
+    const signature = req.headers['x-razorpay-signature'] as string;
+
+    // HMAC-SHA256 signature verification
+    if (signature && (req as any).rawBody) {
+      const expectedSignature = crypto
+        .createHmac('sha256', webhookSecret)
+        .update((req as any).rawBody)
+        .digest('hex');
+
+      if (signature !== expectedSignature) {
+        console.warn('[Razorpay Webhook] Invalid signature received');
+        return res.status(400).json({ error: 'Invalid webhook signature' });
+      }
+    }
+
+    const event = req.body?.event;
+    console.log(`[Razorpay Webhook] Processing event: ${event}`);
+
+    // Accepted payment success events
+    const validEvents = ['payment.captured', 'qr_code.credited', 'order.paid'];
+    if (!validEvents.includes(event)) {
+      return res.json({ status: 'ignored', message: `Event ${event} not actionable` });
+    }
+
+    const payload = req.body?.payload || {};
+    const payment = payload.payment?.entity || {};
+    const orderEntity = payload.order?.entity || {};
+
+    const amountInr = (payment.amount || orderEntity.amount || 0) / 100;
+    const razorpayOrderId = payment.order_id || orderEntity.id || `rzp_${Date.now()}`;
+    const paymentId = payment.id || `pay_${Date.now()}`;
+    const notes = payment.notes || orderEntity.notes || {};
+
+    const userEmail = (notes.user_email || payment.email || '').toString().trim().toLowerCase();
+    const userIdentifier = notes.user_id;
+
+    // Resolve user ID
+    let resolvedUserId: number | string = 1;
+    if (userEmail) {
+      try {
+        const { data: sbU } = await supabase.from('users').select('*').ilike('email', userEmail).maybeSingle();
+        if (sbU?.id) resolvedUserId = sbU.id;
+      } catch {}
+    } else if (userIdentifier && !isNaN(Number(userIdentifier))) {
+      resolvedUserId = Number(userIdentifier);
+    }
+
+    let parsedItems: any[] = [];
+    try {
+      if (notes.items) {
+        parsedItems = typeof notes.items === 'string' ? JSON.parse(notes.items) : notes.items;
+      }
+    } catch {}
+
+    const now = new Date().toISOString();
+    const localOrderId = generateId('ord');
+
+    // 1. Insert new record into orders table in Supabase
+    let createdSbOrder: any = null;
+    try {
+      const { data: newOrder, error: oErr } = await supabase
+        .from('orders')
+        .insert({
+          user_id: Number(resolvedUserId) || 1,
+          total_amount: amountInr || 149,
+          status: 'confirmed',
+          created_at: now,
+        })
+        .select()
+        .single();
+
+      if (oErr) {
+        console.warn('Supabase webhook order insertion notice:', oErr);
+      } else {
+        createdSbOrder = newOrder;
+      }
+    } catch (sbOrderErr) {
+      console.warn('Supabase webhook order error:', sbOrderErr);
+    }
+
+    // 2. Insert into SQLite orders table
+    try {
+      db.prepare(`
+        INSERT INTO orders (id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id)
+        VALUES (?, ?, ?, 'confirmed', ?, ?, ?)
+      `).run(localOrderId, String(resolvedUserId), amountInr || 149, now, razorpayOrderId, paymentId);
+    } catch (sqlErr) {
+      console.warn('SQLite webhook order insertion notice:', sqlErr);
+    }
+
+    // 3. Insert corresponding records into order_items table in Supabase & SQLite
+    if (parsedItems.length > 0) {
+      for (const it of parsedItems) {
+        const itPrice = Number(it.price) || 149;
+        const itQty = Number(it.qty || it.quantity) || 1;
+        const itProdId = it.productId || it.product_id || 1;
+        const numProdId = !isNaN(Number(itProdId)) ? Number(itProdId) : 1;
+
+        if (createdSbOrder?.id) {
+          try {
+            await supabase.from('order_items').insert({
+              order_id: createdSbOrder.id,
+              product_id: numProdId,
+              price: itPrice,
+              quantity: itQty,
+            });
+          } catch (itemErr) {
+            console.warn('Supabase order_items webhook insert error:', itemErr);
+          }
+        }
+
+        try {
+          db.prepare(`
+            INSERT INTO order_items (id, order_id, product_id, name_snapshot, price_snapshot, qty)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(generateId('oit'), localOrderId, String(itProdId), it.name || 'Aurra Beverage', itPrice, itQty);
+        } catch {}
+
+        try {
+          db.prepare('UPDATE products SET remaining_quantity = MAX(0, remaining_quantity - ?) WHERE id = ?').run(itQty, String(itProdId));
+          await supabase.from('products').update({ updated_at: now }).eq('id', numProdId);
+        } catch {}
+      }
+    }
+
+    console.log(`[Razorpay Webhook] Successfully processed order for payment ${paymentId}`);
+    return res.status(200).json({ status: 'ok', received: true, orderId: createdSbOrder?.id || localOrderId });
+  } catch (err: any) {
+    console.error('[Razorpay Webhook] Error:', err);
+    return res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
+// POST /api/orders/confirm-payment (In-app confirmation after QR scan)
+router.post('/orders/confirm-payment', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { razorpayOrderId, paymentId, items, amount } = req.body || {};
+    const userId = req.user!.id;
+    const now = new Date().toISOString();
+    const orderId = generateId('ord');
+    const totalAmount = Number(amount) || 0;
+
+    let sbUserId = 1;
+    if (!isNaN(Number(userId))) {
+      sbUserId = Number(userId);
+    } else {
+      const { data: u } = await supabase.from('users').select('id').eq('email', req.user!.email).maybeSingle();
+      if (u?.id) sbUserId = Number(u.id);
+    }
+
+    // 1. Insert into Supabase orders
+    let createdSbOrder: any = null;
+    try {
+      const { data: newOrder, error: oErr } = await supabase
+        .from('orders')
+        .insert({
+          user_id: sbUserId,
+          total_amount: totalAmount,
+          status: 'confirmed',
+          created_at: now,
+        })
+        .select()
+        .single();
+
+      if (!oErr && newOrder) {
+        createdSbOrder = newOrder;
+      }
+    } catch (e) {
+      console.warn('Supabase order insert note:', e);
+    }
+
+    // 2. Insert into SQLite orders
+    try {
+      db.prepare(`
+        INSERT INTO orders (id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id)
+        VALUES (?, ?, ?, 'confirmed', ?, ?, ?)
+      `).run(orderId, String(userId), totalAmount, now, razorpayOrderId || null, paymentId || null);
+    } catch (e) {
+      console.warn('SQLite order insert note:', e);
+    }
+
+    // 3. Insert items into order_items
+    const resolvedItems: any[] = [];
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        const itPrice = Number(it.price) || 149;
+        const itQty = Number(it.qty || it.quantity) || 1;
+        const itProdId = it.productId || it.product_id || it.id || '1';
+        const numProdId = !isNaN(Number(itProdId)) ? Number(itProdId) : 1;
+        const itemName = it.name || it.beverage_name || 'Aurra Beverage';
+
+        if (createdSbOrder?.id) {
+          try {
+            await supabase.from('order_items').insert({
+              order_id: createdSbOrder.id,
+              product_id: numProdId,
+              price: itPrice,
+              quantity: itQty,
+            });
+          } catch (e) {
+            console.warn('Supabase order_items insert note:', e);
+          }
+        }
+
+        try {
+          db.prepare(`
+            INSERT INTO order_items (id, order_id, product_id, name_snapshot, price_snapshot, qty)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(generateId('oit'), orderId, String(itProdId), itemName, itPrice, itQty);
+        } catch {}
+
+        try {
+          db.prepare('UPDATE products SET remaining_quantity = MAX(0, remaining_quantity - ?) WHERE id = ?').run(itQty, String(itProdId));
+        } catch {}
+
+        resolvedItems.push({
+          productId: String(itProdId),
+          name: itemName,
+          price: itPrice,
+          qty: itQty,
+        });
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      order: {
+        id: createdSbOrder?.id ? String(createdSbOrder.id) : orderId,
+        userId,
+        total: totalAmount,
+        status: 'confirmed',
+        createdAt: now,
+        items: resolvedItems,
+        razorpayOrderId,
+      },
+    });
+  } catch (err: any) {
+    console.error('Confirm payment error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to confirm order payment' });
   }
 });
 

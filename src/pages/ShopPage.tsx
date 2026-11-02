@@ -21,6 +21,7 @@ import { api, FALLBACK_PRODUCTS } from '../services/api';
 import { Product, Order } from '../types';
 import { CartDrawer } from '../components/CartDrawer';
 import { PaymentModal } from '../components/PaymentModal';
+import { CheckoutAddressModal } from '../components/CheckoutAddressModal';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { AuthModal } from '../components/AuthModal';
 import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal';
@@ -33,6 +34,7 @@ export const ShopPage: React.FC = () => {
   const [addedAnimationId, setAddedAnimationId] = useState<string | null>(null);
 
   // Modals state
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [confirmedOrder, setConfirmedOrder] = useState<Order | null>(null);
   
@@ -345,10 +347,26 @@ export const ShopPage: React.FC = () => {
 
       {/* Cart Drawer */}
       <CartDrawer
-        onProceedToCheckout={() => setIsPaymentModalOpen(true)}
+        onProceedToCheckout={() => {
+          if (!user) {
+            setIsAuthModalOpen(true);
+            return;
+          }
+          setIsAddressModalOpen(true);
+        }}
       />
 
-      {/* Payment Modal with Pure Integrated UPI & QR */}
+      {/* Checkout Address & Mobile Verification Modal */}
+      <CheckoutAddressModal
+        isOpen={isAddressModalOpen}
+        onClose={() => setIsAddressModalOpen(false)}
+        onConfirmed={() => {
+          setIsAddressModalOpen(false);
+          setIsPaymentModalOpen(true);
+        }}
+      />
+
+      {/* Payment Modal with Pure Integrated Dynamic Razorpay QR */}
       <PaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}

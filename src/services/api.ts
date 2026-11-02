@@ -426,9 +426,8 @@ export const api = {
         if (userObj?.email) {
           await supabase.from('users').update({
             user_profile: null,
-            avatar_url: null,
             updated_at: new Date().toISOString(),
-          }).eq('email', userObj.email);
+          }).ilike('email', userObj.email.toLowerCase().trim());
         }
       } catch {}
 
@@ -457,29 +456,32 @@ export const api = {
 
     let finalUrl = payload.avatarUrl;
 
-    // If file or imageBase64 is passed, attempt client-side signed upload to "Aurra profile"
-    if (!finalUrl && (payload.file || payload.imageBase64)) {
+    // If file or imageBase64 is passed, OR if avatarUrl is a base64 data URL, upload signed to Cloudinary folder "Aurra profile"
+    const isDataUri = typeof finalUrl === 'string' && finalUrl.startsWith('data:image/');
+    if (isDataUri || (!finalUrl && (payload.file || payload.imageBase64))) {
       try {
-        const itemToUpload = payload.file || payload.imageBase64!;
+        const itemToUpload = payload.file || payload.imageBase64 || finalUrl!;
         const uploadRes = await this.uploadToCloudinarySigned(itemToUpload, 'Aurra profile');
-        finalUrl = uploadRes.url;
+        if (uploadRes?.url) {
+          finalUrl = uploadRes.url;
+        }
       } catch (clientUploadErr) {
         console.warn('Direct Cloudinary signed upload fallback to server endpoint:', clientUploadErr);
       }
     }
 
-    // 1. Direct Supabase synchronization guarantee:
-    if (finalUrl) {
+    // 1. Direct Supabase synchronization: save Cloudinary secure URL in user_profile column
+    if (finalUrl && finalUrl.startsWith('http')) {
       try {
         const { supabase } = await import('./supabase.js');
         const userJson = localStorage.getItem('aurra_auth_user');
         const userObj = userJson ? JSON.parse(userJson) : null;
         if (userObj?.email) {
+          const cleanEmail = userObj.email.toLowerCase().trim();
           await supabase.from('users').update({
             user_profile: finalUrl,
-            avatar_url: finalUrl,
             updated_at: new Date().toISOString(),
-          }).eq('email', userObj.email);
+          }).ilike('email', cleanEmail);
         }
       } catch (sbErr) {
         console.warn('Supabase direct update warning:', sbErr);
@@ -887,10 +889,78 @@ export const api = {
   },
 
   async updateAddress(payload: { address: string }) {
-    return request<{ success: boolean; message: string; user: User }>('/api/auth/address', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
+    const cleanAddress = payload.address.trim();
+    let result: { success: boolean; message: string; user: User } | null = null;
+    try {
+      result = await request<{ success: boolean; message: string; user: User }>('/api/auth/address', {
+        method: 'PUT',
+        body: JSON.stringify({ address: cleanAddress }),
+      });
+    } catch (err) {
+      console.warn('API updateAddress note (using direct Supabase):', err);
+    }
+
+    try {
+      const { supabase } = await import('./supabase.js');
+      const cached = localStorage.getItem('aurra_auth_user');
+      const userObj = cached ? JSON.parse(cached) : null;
+      if (userObj?.email) {
+        await supabase
+          .from('users')
+          .update({
+            delivery_address: cleanAddress,
+            updated_at: new Date().toISOString(),
+          })
+          .ilike('email', userObj.email.trim());
+
+        userObj.delivery_address = cleanAddress;
+        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+        if (!result) {
+          result = { success: true, message: 'Address saved!', user: userObj };
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase address update note:', sbErr);
+    }
+
+    if (result) return result;
+    return { success: true, message: 'Address saved!', user: { delivery_address: cleanAddress } as any };
+  },
+
+  async updateDeliveryInfo(payload: { address: string; contactNo: string }) {
+    const cleanAddress = payload.address.trim();
+    const cleanDigits = (payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
+
+    // 1. Direct Supabase update
+    try {
+      const { supabase } = await import('./supabase.js');
+      const cached = localStorage.getItem('aurra_auth_user');
+      const userObj = cached ? JSON.parse(cached) : null;
+      if (userObj?.email) {
+        await supabase
+          .from('users')
+          .update({
+            delivery_address: cleanAddress,
+            'contact_no.': cleanDigits,
+            updated_at: new Date().toISOString(),
+          })
+          .ilike('email', userObj.email.trim());
+
+        userObj.delivery_address = cleanAddress;
+        userObj.contact_no = cleanDigits;
+        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+      }
+    } catch (sbErr) {
+      console.warn('Direct Supabase delivery info note:', sbErr);
+    }
+
+    // 2. Call backend endpoints
+    await this.updateAddress({ address: cleanAddress }).catch(() => null);
+    await this.updateContactNo({ contactNo: cleanDigits }).catch(() => null);
+
+    const cached = localStorage.getItem('aurra_auth_user');
+    const userObj = cached ? JSON.parse(cached) : null;
+    return { success: true, user: userObj };
   },
 
   async updateContactNo(payload: { contactNo: string }) {
@@ -941,6 +1011,43 @@ export const api = {
     }>('/api/orders', {
       method: 'POST',
       body: JSON.stringify({ items }),
+    });
+  },
+
+  async createRazorpayQr(payload: {
+    amount?: number;
+    items: { productId: string; qty: number; price?: number; name?: string }[];
+    contactNo?: string;
+    address?: string;
+  }) {
+    return request<{
+      success: boolean;
+      razorpayOrderId: string;
+      amount: number;
+      currency: string;
+      businessUpi: string;
+      upiString: string;
+      qrCodeDataUrl: string;
+      receipt: string;
+    }>('/api/razorpay/create-qr', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async confirmPayment(payload: {
+    razorpayOrderId?: string;
+    paymentId?: string;
+    items: { productId: string; qty: number; price?: number; name?: string }[];
+    amount: number;
+  }) {
+    return request<{
+      success: boolean;
+      order: Order;
+      orderId: string;
+    }>('/api/orders/confirm-payment', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 

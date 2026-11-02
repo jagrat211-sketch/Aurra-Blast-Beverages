@@ -15,6 +15,7 @@ interface AuthContextType {
   updateProfile: (name: string) => Promise<{ success: boolean; user: User }>;
   updateAddress: (address: string) => Promise<{ success: boolean; user: User; message: string }>;
   updateContactNo: (contactNo: string) => Promise<{ success: boolean; user: User; message: string }>;
+  updateDeliveryInfo: (address: string, contactNo: string) => Promise<{ success: boolean; user: User }>;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; user: User }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   updateAvatar: (avatarUrl: string, file?: File, remove?: boolean) => Promise<{ success: boolean; user: User; url?: string | null }>;
@@ -131,6 +132,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
+  const updateDeliveryInfo = async (address: string, contactNo: string) => {
+    const res = await api.updateDeliveryInfo({ address, contactNo });
+    if (res.user) {
+      setUser(res.user);
+      setCartUser(res.user);
+    }
+    return res as { success: boolean; user: User };
+  };
+
   const adminLogin = async (username: string, password: string) => {
     const res = await api.adminLogin({ username, password });
     if (res.user) {
@@ -168,6 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateProfile,
         updateAddress,
         updateContactNo,
+        updateDeliveryInfo,
         adminLogin,
         changePassword,
         updateAvatar,

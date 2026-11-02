@@ -215,7 +215,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onProceedToCheckout }) =
 
               <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-                <span>Mock Payment Simulator · No card details collected</span>
+                <span>Razorpay Dynamic UPI QR · 100% Secure Payment</span>
               </div>
             </div>
           )}
