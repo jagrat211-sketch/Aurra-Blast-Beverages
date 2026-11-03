@@ -27,6 +27,7 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     ...(token ? { Authorization: `Bearer ${token}`, 'x-auth-token': token } : {}),
     ...(cachedUser?.id ? { 'x-user-id': String(cachedUser.id) } : {}),
     ...(cachedUser?.email ? { 'x-user-email': String(cachedUser.email) } : {}),
+    ...(cachedUser?.role ? { 'x-user-role': String(cachedUser.role) } : {}),
     ...((options.headers as Record<string, string>) || {}),
   };
 
@@ -285,6 +286,7 @@ export const api = {
           const storedPassword = sbUser.password || sbUser.password_hash;
           if (storedPassword === payload.password) {
             const role = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
+            const savedContact = sbUser['contact_no.'] || sbUser.contact_no || sbUser.contact_number || '';
             const authUser: User = {
               id: String(sbUser.id),
               name: sbUser.name || 'Aurra Customer',
@@ -296,10 +298,13 @@ export const api = {
               avatar_url: sbUser.user_profile || sbUser.avatar_url,
               user_profile: sbUser.user_profile || sbUser.avatar_url,
               delivery_address: sbUser.delivery_address,
+              contact_no: savedContact,
               parent_id: 'AURRA-DIST-IND-01',
             };
             try {
               localStorage.setItem('aurra_auth_user', JSON.stringify(authUser));
+              if (savedContact) localStorage.setItem('aurra_user_contact', savedContact);
+              if (sbUser.delivery_address) localStorage.setItem('aurra_user_address', sbUser.delivery_address);
             } catch {}
             return { success: true, user: authUser };
           }
@@ -958,13 +963,27 @@ export const api = {
           })
           .ilike('email', userObj.email.trim());
 
+        try {
+          await supabase
+            .from('users')
+            .update({
+              contact_no: cleanDigits,
+            })
+            .ilike('email', userObj.email.trim());
+        } catch {}
+
         userObj.delivery_address = cleanAddress;
         userObj.contact_no = cleanDigits;
         localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+        if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
+        if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
       }
     } catch (sbErr) {
       console.warn('Direct Supabase delivery info note:', sbErr);
     }
+
+    if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
+    if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
 
     // 2. Call backend endpoints
     await this.updateAddress({ address: cleanAddress }).catch(() => null);
@@ -1000,9 +1019,19 @@ export const api = {
             updated_at: new Date().toISOString(),
           })
           .eq('email', userObj.email);
+
+        try {
+          await supabase
+            .from('users')
+            .update({
+              contact_no: cleanDigits,
+            })
+            .eq('email', userObj.email);
+        } catch {}
         
         userObj.contact_no = cleanDigits;
         localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+        localStorage.setItem('aurra_user_contact', cleanDigits);
         if (!result) {
           result = { success: true, message: 'Contact number saved!', user: userObj };
         }
@@ -1010,6 +1039,8 @@ export const api = {
     } catch (sbErr) {
       console.warn('Direct Supabase contact_no update notice:', sbErr);
     }
+
+    if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
 
     if (result) return result;
     return { success: true, message: 'Contact number saved!', user: { contact_no: cleanDigits } as any };
@@ -1173,18 +1204,23 @@ export const api = {
       console.warn('API updateOrderStatus note:', err);
     }
 
-    // Direct Supabase status update guarantee
+    // Direct Supabase status update guarantee (Strictly Admin only)
     try {
-      const { supabase } = await import('./supabase.js');
-      const now = new Date().toISOString();
-      const sbUpdate: any = { status, updated_time: now };
-      if (finalCode) {
-        sbUpdate.delivery_code = finalCode;
-      }
-      if (!isNaN(Number(orderId))) {
-        await supabase.from('orders').update(sbUpdate).eq('id', Number(orderId));
-      } else {
-        await supabase.from('orders').update(sbUpdate).eq('id', orderId);
+      const cached = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
+      const cachedUser = cached ? JSON.parse(cached) : null;
+      const isAdmin = cachedUser?.role === 'admin' || cachedUser?.email?.toLowerCase().includes('admin');
+      if (isAdmin) {
+        const { supabase } = await import('./supabase.js');
+        const now = new Date().toISOString();
+        const sbUpdate: any = { status, updated_time: now };
+        if (finalCode) {
+          sbUpdate.delivery_code = finalCode;
+        }
+        if (!isNaN(Number(orderId))) {
+          await supabase.from('orders').update(sbUpdate).eq('id', Number(orderId));
+        } else {
+          await supabase.from('orders').update(sbUpdate).eq('id', orderId);
+        }
       }
     } catch (sbErr) {
       console.warn('Direct Supabase updateOrderStatus note:', sbErr);

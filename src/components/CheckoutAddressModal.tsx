@@ -38,18 +38,18 @@ export const CheckoutAddressModal: React.FC<CheckoutAddressModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    const currentAddress = (user?.delivery_address || '').trim();
-    const currentContact = (user?.contact_no || '').replace(/\D/g, '').trim();
+    const currentAddress = (user?.delivery_address || localStorage.getItem('aurra_user_address') || '').trim();
+    const currentContact = (user?.contact_no || localStorage.getItem('aurra_user_contact') || '').replace(/\D/g, '').trim();
 
     setAddress(currentAddress);
     setContactNo(currentContact);
     setError(null);
 
-    // If either delivery address or mobile number is missing, system MUST block checkout and prompt to enter them
-    if (!currentAddress || !currentContact || currentContact.length !== 10) {
-      setMode('enter');
-    } else {
+    // If both delivery address and mobile number are present, show confirmation popup allowing user to view or edit/update
+    if (currentAddress && currentContact && currentContact.length === 10) {
       setMode('confirm');
+    } else {
+      setMode('enter');
     }
   }, [isOpen, user?.delivery_address, user?.contact_no]);
 

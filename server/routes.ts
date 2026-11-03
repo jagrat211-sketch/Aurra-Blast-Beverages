@@ -2218,6 +2218,14 @@ router.all(['/orders/:id/status', '/admin/orders/:id/status'], optionalAuth, asy
     return res.status(405).json({ error: 'Method not allowed' });
   }
   try {
+    // Strict Admin authorization check: Only admin role can change order status
+    const userRole = req.user?.role || (req.headers['x-user-role'] as string);
+    const userEmail = (req.user?.email || (req.headers['x-user-email'] as string) || '').toLowerCase().trim();
+    const isAdmin = userRole === 'admin' || userEmail === 'adminaurra@beverages.com' || userEmail === 'admin@g.com' || userEmail === 'admin';
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Access denied: Only administrators can update order statuses.' });
+    }
+
     const { status, delivery_code, deliveryCode } = req.body || {};
     const validStatuses = ['confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'];
     if (!validStatuses.includes(status)) {

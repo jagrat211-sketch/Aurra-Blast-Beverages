@@ -45,8 +45,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const cached = localStorage.getItem('aurra_auth_user');
         if (cached) {
           const parsed = JSON.parse(cached);
+          const cachedContact = localStorage.getItem('aurra_user_contact');
+          const cachedAddress = localStorage.getItem('aurra_user_address');
+          if (cachedContact && !parsed.contact_no) parsed.contact_no = cachedContact;
+          if (cachedAddress && !parsed.delivery_address) parsed.delivery_address = cachedAddress;
+
           setUser(parsed);
           setCartUser(parsed);
+
+          // Background Supabase sync to ensure fresh profile info (contact number, address, role)
+          if (parsed?.email) {
+            (async () => {
+              try {
+                const { supabase } = await import('../services/supabase.js');
+                const { data } = await supabase
+                  .from('users')
+                  .select('*')
+                  .ilike('email', parsed.email.trim())
+                  .maybeSingle();
+
+                if (data) {
+                  const freshContact = data['contact_no.'] || data.contact_no || parsed.contact_no;
+                  const freshAddress = data.delivery_address || parsed.delivery_address;
+                  const refreshed: User = {
+                    ...parsed,
+                    contact_no: freshContact,
+                    delivery_address: freshAddress,
+                    user_profile: data.user_profile || parsed.user_profile,
+                    avatar_url: data.avatar_url || data.user_profile || parsed.avatar_url,
+                  };
+                  setUser(refreshed);
+                  setCartUser(refreshed);
+                  try {
+                    localStorage.setItem('aurra_auth_user', JSON.stringify(refreshed));
+                    if (freshContact) localStorage.setItem('aurra_user_contact', freshContact);
+                    if (freshAddress) localStorage.setItem('aurra_user_address', freshAddress);
+                  } catch {}
+                }
+              } catch {
+                // ignore
+              }
+            })();
+          }
           return;
         }
       } catch {
