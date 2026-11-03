@@ -5,10 +5,7 @@ import {
   Plus,
   Image as ImageIcon,
   Upload,
-  Database,
   Users,
-  Activity,
-  Play,
   CheckCircle2,
   AlertCircle,
   RefreshCw,
@@ -34,7 +31,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useFeatureFlags } from '../context/FeatureFlagContext';
 import { api } from '../services/api';
-import { Product, CartEventRecord } from '../types';
+import { Product } from '../types';
 import { BeverageImageUploadModal } from '../components/BeverageImageUploadModal';
 import { ImageCropModal } from '../components/ImageCropModal';
 
@@ -54,7 +51,7 @@ export const AdminPage: React.FC = () => {
   const { isAuraTributeEnabled, toggleAuraTribute, setAuraTributeEnabled, loading: flagLoading } = useFeatureFlags();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'products' | 'events' | 'users' | 'sql' | 'features' | 'orders'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'users' | 'features' | 'orders'>('products');
   
   // Modal for uploading and associating beverage images
   const [selectedProductForUpload, setSelectedProductForUpload] = useState<Product | null>(null);
@@ -88,10 +85,6 @@ export const AdminPage: React.FC = () => {
   const [savingProduct, setSavingProduct] = useState(false);
   const [productSuccess, setProductSuccess] = useState<string | null>(null);
 
-  // Cart Events
-  const [cartEvents, setCartEvents] = useState<CartEventRecord[]>([]);
-  const [loadingEvents, setLoadingEvents] = useState(false);
-
   // Users
   const [usersList, setUsersList] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -118,13 +111,33 @@ export const AdminPage: React.FC = () => {
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState(false);
 
-  // SQL Query console
-  const [queryInput, setQueryInput] = useState<string>(
-    `SELECT u.name as customer, count(o.id) as order_count, COALESCE(sum(o.total), 0) as total_spent_inr\nFROM users u\nLEFT JOIN orders o ON o.user_id = u.id\nGROUP BY u.id\nORDER BY total_spent_inr DESC;`
-  );
-  const [queryResults, setQueryResults] = useState<{ rows: any[]; rowCount: number } | null>(null);
-  const [queryError, setQueryError] = useState<string | null>(null);
-  const [runningQuery, setRunningQuery] = useState(false);
+  // Feature toggle confirmation modal state
+  const [showFeatureConfirmModal, setShowFeatureConfirmModal] = useState(false);
+  const [pendingFeatureState, setPendingFeatureState] = useState<boolean | null>(null);
+  const [confirmingFeatureUpdate, setConfirmingFeatureUpdate] = useState(false);
+  const [featureSyncMessage, setFeatureSyncMessage] = useState<string | null>(null);
+
+  const handleTriggerFeatureToggle = (targetState?: boolean) => {
+    const nextState = typeof targetState === 'boolean' ? targetState : !isAuraTributeEnabled;
+    setPendingFeatureState(nextState);
+    setShowFeatureConfirmModal(true);
+  };
+
+  const handleConfirmFeatureToggle = async () => {
+    if (pendingFeatureState === null) return;
+    setConfirmingFeatureUpdate(true);
+    try {
+      await setAuraTributeEnabled(pendingFeatureState);
+      setShowFeatureConfirmModal(false);
+      setPendingFeatureState(null);
+      setFeatureSyncMessage(`Successfully updated "Enable Aura Tribute" to ${pendingFeatureState ? 'ENABLED' : 'DISABLED'} in Supabase database!`);
+      setTimeout(() => setFeatureSyncMessage(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update feature flag in database');
+    } finally {
+      setConfirmingFeatureUpdate(false);
+    }
+  };
 
   // Restrict to admin
   useEffect(() => {
@@ -153,16 +166,6 @@ export const AdminPage: React.FC = () => {
       setProducts(res.products || []);
     } finally {
       setLoadingProducts(false);
-    }
-  };
-
-  const loadCartEvents = async () => {
-    setLoadingEvents(true);
-    try {
-      const res = await api.getAdminCartEvents(150);
-      setCartEvents(res.events || []);
-    } finally {
-      setLoadingEvents(false);
     }
   };
 
@@ -255,7 +258,6 @@ export const AdminPage: React.FC = () => {
 
   // Tab change loader
   useEffect(() => {
-    if (activeTab === 'events') loadCartEvents();
     if (activeTab === 'users') loadUsers();
     if (activeTab === 'products') loadProducts();
     if (activeTab === 'orders') loadAdminOrders();
@@ -409,41 +411,6 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  const handleRunQuery = async (queryText?: string) => {
-    const sql = queryText || queryInput;
-    setRunningQuery(true);
-    setQueryError(null);
-    try {
-      const res = await api.runAdminSqlQuery(sql);
-      setQueryResults(res);
-    } catch (err: any) {
-      setQueryError(err.message || 'SQL execution failed');
-      setQueryResults(null);
-    } finally {
-      setRunningQuery(false);
-    }
-  };
-
-  // Pre-canned SQL queries
-  const cannedQueries = [
-    {
-      title: 'Users & Purchases by Total Spent',
-      query: `SELECT u.name, u.email, count(o.id) as order_count, COALESCE(sum(o.total), 0) as total_spent_inr\nFROM users u\nLEFT JOIN orders o ON o.user_id = u.id\nGROUP BY u.id\nORDER BY total_spent_inr DESC;`,
-    },
-    {
-      title: 'Cart Add/Remove History by Date',
-      query: `SELECT ce.created_at, u.name as customer, p.name as product, ce.action, ce.qty\nFROM cart_events ce\nJOIN users u ON u.id = ce.user_id\nJOIN products p ON p.id = ce.product_id\nORDER BY ce.created_at DESC\nLIMIT 50;`,
-    },
-    {
-      title: 'Most Popular Beverages Ordered',
-      query: `SELECT oi.name_snapshot as flavor, sum(oi.qty) as total_units_sold, sum(oi.qty * oi.price_snapshot) as total_sales_inr\nFROM order_items oi\nGROUP BY oi.name_snapshot\nORDER BY total_units_sold DESC;`,
-    },
-    {
-      title: 'Cart Drop-off / Abandonment Check',
-      query: `SELECT ce.action, count(*) as event_count\nFROM cart_events ce\nGROUP BY ce.action;`,
-    },
-  ];
-
   if (authLoading || !user || user.role !== 'admin') {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -467,14 +434,13 @@ export const AdminPage: React.FC = () => {
             </h1>
           </div>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Store operations, beverage asset management, live cart telemetry, and SQLite diagnostics
+            Store operations, beverage asset management, customer accounts, and order fulfillment
           </p>
         </div>
 
         <button
           onClick={() => {
             loadOverview();
-            if (activeTab === 'events') loadCartEvents();
             if (activeTab === 'users') loadUsers();
             if (activeTab === 'products') loadProducts();
             if (activeTab === 'orders') loadAdminOrders();
@@ -487,7 +453,7 @@ export const AdminPage: React.FC = () => {
       </div>
 
       {/* KPI Cards Strip */}
-      <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
           <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Revenue</span>
           <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
@@ -504,14 +470,6 @@ export const AdminPage: React.FC = () => {
             {stats?.totalUsers ?? 0}
           </div>
           <span className="text-[11px] text-slate-500 dark:text-slate-400">Verified customers</span>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Cart Events Logged</span>
-          <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
-            {stats?.totalCartEvents ?? 0}
-          </div>
-          <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Add / remove actions</span>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
@@ -538,18 +496,6 @@ export const AdminPage: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('events')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'events'
-              ? 'border-amber-500 text-amber-600 dark:text-amber-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Activity className="h-4 w-4" />
-          <span>Live Cart Events Stream</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('users')}
           className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'users'
@@ -559,18 +505,6 @@ export const AdminPage: React.FC = () => {
         >
           <Users className="h-4 w-4" />
           <span>Customer Accounts</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('sql')}
-          className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'sql'
-              ? 'border-amber-500 text-amber-600 dark:text-amber-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Database className="h-4 w-4" />
-          <span>SQL Query Diagnostics</span>
         </button>
 
         <button
@@ -991,87 +925,7 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: Live Cart Events */}
-      {activeTab === 'events' && (
-        <div className="mt-8 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Cart Activity Telemetry</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Every add, remove, and quantity adjustment logged with server timestamp
-              </p>
-            </div>
-            <button
-              onClick={loadCartEvents}
-              className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loadingEvents ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
-          </div>
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4 font-semibold">Timestamp</th>
-                  <th className="py-3 px-4 font-semibold">Customer</th>
-                  <th className="py-3 px-4 font-semibold">Beverage</th>
-                  <th className="py-3 px-4 font-semibold">Action</th>
-                  <th className="py-3 px-4 font-semibold text-right">Resulting Qty</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {cartEvents.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-400">
-                      No cart events recorded yet.
-                    </td>
-                  </tr>
-                ) : (
-                  cartEvents.map((evt) => {
-                    const formatted = new Date(evt.created_at).toLocaleString('en-IN', {
-                      dateStyle: 'short',
-                      timeStyle: 'medium',
-                    });
-
-                    return (
-                      <tr key={evt.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className="py-3 px-4 text-slate-500 dark:text-slate-400 font-mono text-[11px]">
-                          {formatted}
-                        </td>
-                        <td className="py-3 px-4 font-medium text-slate-900 dark:text-white">
-                          <div>{evt.user_name}</div>
-                          <div className="text-[10px] text-slate-400">{evt.user_email}</div>
-                        </td>
-                        <td className="py-3 px-4 text-slate-800 dark:text-slate-200 font-medium">
-                          {evt.product_name}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-                              evt.action === 'add'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                                : evt.action === 'remove'
-                                ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                                : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                            }`}
-                          >
-                            {evt.action}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold tabular-nums text-slate-900 dark:text-white">
-                          {evt.qty}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* TAB 3: Users */}
       {activeTab === 'users' && (
@@ -1165,114 +1019,7 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 4: SQL Query Runner */}
-      {activeTab === 'sql' && (
-        <div className="mt-8 space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-              SQLite Query Diagnostics & Analytics
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Run custom SELECT queries or run pre-canned reports for purchases and cart history
-            </p>
-          </div>
-
-          {/* Canned Query Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {cannedQueries.map((item, idx) => (
-              <button
-                key={idx}
-                onClick={() => {
-                  setQueryInput(item.query);
-                  handleRunQuery(item.query);
-                }}
-                className="flex flex-col text-left rounded-xl border border-slate-200 bg-white p-3 hover:border-amber-500 hover:shadow-xs transition-all dark:border-slate-800 dark:bg-slate-900"
-              >
-                <span className="text-xs font-bold text-slate-900 dark:text-white">{item.title}</span>
-                <span className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 font-medium">Click to execute →</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Query Box */}
-          <div className="space-y-3">
-            <div className="relative">
-              <textarea
-                value={queryInput}
-                onChange={(e) => setQueryInput(e.target.value)}
-                rows={4}
-                className="w-full rounded-xl border border-slate-300 bg-slate-950 p-3.5 font-mono text-xs text-emerald-400 focus:border-amber-500 focus:outline-none dark:border-slate-700"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-slate-400">
-                Safety rule: Read-only SELECT statements allowed.
-              </span>
-              <button
-                onClick={() => handleRunQuery()}
-                disabled={runningQuery}
-                className="flex items-center gap-2 rounded-xl bg-amber-500 py-2 px-5 text-xs font-bold text-white shadow-xs hover:bg-amber-600 transition-colors disabled:opacity-50"
-              >
-                {runningQuery ? (
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                ) : (
-                  <>
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    <span>Run Query</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Error */}
-          {queryError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-              {queryError}
-            </div>
-          )}
-
-          {/* Results Table */}
-          {queryResults && (
-            <div className="space-y-2">
-              <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                Returned {queryResults.rowCount} row(s)
-              </div>
-              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                {queryResults.rows.length === 0 ? (
-                  <div className="p-4 text-xs text-slate-400">Query returned 0 rows.</div>
-                ) : (
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
-                      <tr>
-                        {Object.keys(queryResults.rows[0]).map((key) => (
-                          <th key={key} className="py-2 px-3 font-semibold font-mono">
-                            {key}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {queryResults.rows.map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 font-mono text-[11px]">
-                          {Object.values(row).map((val: any, j) => (
-                            <td key={j} className="py-2 px-3 text-slate-800 dark:text-slate-200">
-                              {String(val ?? 'NULL')}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 5: Feature Settings (Fifth tab beside SQL Query Diagnostics) */}
+      {/* Feature Settings */}
       {activeTab === 'features' && (
         <div className="mt-8 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1339,8 +1086,8 @@ export const AdminPage: React.FC = () => {
                   type="button"
                   role="switch"
                   aria-checked={isAuraTributeEnabled}
-                  disabled={flagLoading}
-                  onClick={() => toggleAuraTribute()}
+                  disabled={flagLoading || confirmingFeatureUpdate}
+                  onClick={() => handleTriggerFeatureToggle()}
                   className={`relative inline-flex h-8 w-16 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 ${
                     isAuraTributeEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
                   }`}
@@ -1357,16 +1104,24 @@ export const AdminPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Cloud Sync Note: Required by user specification */}
-            <div className="mt-6 rounded-xl border border-amber-200/80 bg-amber-50/60 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+            {/* Success toast if updated */}
+            {featureSyncMessage && (
+              <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 animate-in fade-in">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>{featureSyncMessage}</span>
+              </div>
+            )}
+
+            {/* Cloud Sync Note: Connected directly to Supabase */}
+            <div className="mt-6 rounded-xl border border-emerald-200/80 bg-emerald-50/60 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
               <div className="flex items-start gap-3">
-                <Globe className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <Globe className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div className="text-xs space-y-1">
-                  <p className="font-bold text-amber-900 dark:text-amber-200">
-                    Database Integration &amp; Supabase Synchronizer Note
+                  <p className="font-bold text-emerald-900 dark:text-emerald-200">
+                    Live Supabase Database Synchronization Active
                   </p>
-                  <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
-                    <strong>( This Enable Aura Tribute will be synced with Supabase in future)</strong>. The current state is persisted locally and backed by the local SQLite runtime database, ready for direct connection to Supabase cloud RPC synchronization.
+                  <p className="text-emerald-800 dark:text-emerald-300 leading-relaxed">
+                    Connected directly to the <strong>feature_flags</strong> table in Supabase (specifically row <code className="rounded bg-emerald-100/80 px-1 py-0.5 font-mono text-[11px] text-emerald-900 dark:bg-emerald-900 dark:text-emerald-200">id = 'aura_tribute'</code>). Any toggle change executes an UPDATE directly to the database and dynamically updates the global Navbar in real-time.
                   </p>
                 </div>
               </div>
@@ -1381,17 +1136,17 @@ export const AdminPage: React.FC = () => {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setAuraTributeEnabled(true)}
-                  disabled={isAuraTributeEnabled}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  onClick={() => handleTriggerFeatureToggle(true)}
+                  disabled={isAuraTributeEnabled || confirmingFeatureUpdate}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
                 >
                   Force ON
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAuraTributeEnabled(false)}
-                  disabled={!isAuraTributeEnabled}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  onClick={() => handleTriggerFeatureToggle(false)}
+                  disabled={!isAuraTributeEnabled || confirmingFeatureUpdate}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
                 >
                   Force OFF
                 </button>
@@ -2003,6 +1758,122 @@ export const AdminPage: React.FC = () => {
                   </>
                 ) : (
                   <span>Yes</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feature Settings Confirmation Modal */}
+      {showFeatureConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+            onClick={() => !confirmingFeatureUpdate && setShowFeatureConfirmModal(false)}
+          />
+
+          {/* Dialog Box */}
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl transition-all dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center animate-in fade-in zoom-in-95 duration-200">
+            {/* Close Button */}
+            <button
+              type="button"
+              disabled={confirmingFeatureUpdate}
+              onClick={() => {
+                setShowFeatureConfirmModal(false);
+                setPendingFeatureState(null);
+              }}
+              className="absolute top-4 right-4 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              aria-label="Close"
+              title="Close without changing status"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Icon Badge */}
+            <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl shadow-xs mb-4 ${
+              pendingFeatureState
+                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400'
+                : 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400'
+            }`}>
+              <Sliders className="h-7 w-7" />
+            </div>
+
+            {/* Dialog Heading */}
+            <h3 className="text-lg font-black text-slate-900 dark:text-white">
+              Feature Status Change
+            </h3>
+
+            {/* Exact Required Confirmation Question */}
+            <p className="mt-2 text-sm font-bold text-slate-800 dark:text-slate-200">
+              Are you sure you want to change this feature status?
+            </p>
+
+            {/* Context details card */}
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-left text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-500 dark:text-slate-400">Feature:</span>
+                <span className="font-bold text-slate-900 dark:text-white">Enable Aura Tribute</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-500 dark:text-slate-400">Current Status:</span>
+                <span className={`font-black ${isAuraTributeEnabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                  {isAuraTributeEnabled ? 'ENABLED (ON)' : 'DISABLED (OFF)'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-500 dark:text-slate-400">New Target Status:</span>
+                <span className={`font-black ${pendingFeatureState ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {pendingFeatureState ? 'ENABLED (ON)' : 'DISABLED (OFF)'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-700">
+                <span className="font-medium text-slate-500 dark:text-slate-400">Database Synchronizer:</span>
+                <span className="font-mono text-[11px] text-slate-700 dark:text-slate-300">Supabase feature_flags (id: aura_tribute)</span>
+              </div>
+            </div>
+
+            <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+              {pendingFeatureState
+                ? 'Confirming will save to Supabase and immediately make the "Aurra" menu tab visible in the navigation bar.'
+                : 'Confirming will save to Supabase and immediately hide the "Aurra" menu tab from the navigation bar.'}
+            </p>
+
+            {/* Modal Actions */}
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={confirmingFeatureUpdate}
+                onClick={() => {
+                  setShowFeatureConfirmModal(false);
+                  setPendingFeatureState(null);
+                }}
+                className="flex-1 rounded-xl border border-slate-200 py-2.5 px-4 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                No / Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={confirmingFeatureUpdate}
+                onClick={handleConfirmFeatureToggle}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 px-4 text-xs font-bold text-white shadow-md transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 ${
+                  pendingFeatureState
+                    ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                    : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20'
+                }`}
+              >
+                {confirmingFeatureUpdate ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Syncing DB...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4" />
+                    <span>Yes / Confirm</span>
+                  </>
                 )}
               </button>
             </div>

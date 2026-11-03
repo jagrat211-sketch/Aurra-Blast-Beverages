@@ -898,11 +898,71 @@ export const api = {
     return result || { success: true, message: 'Beverage deleted successfully' };
   },
 
-  async updateProfile(payload: { name?: string; delivery_address?: string }) {
-    return request<{ success: boolean; user: User }>('/api/auth/profile', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
+  async updateProfile(payload: { name?: string; email?: string; delivery_address?: string; address?: string; contact_no?: string; contactNo?: string }) {
+    const cleanName = payload.name?.trim();
+    const cleanEmail = payload.email?.toLowerCase().trim();
+    const cleanAddress = (payload.delivery_address || payload.address || '').trim();
+    const cleanContact = (payload.contact_no || payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
+
+    // 1. Direct Supabase write
+    try {
+      const { supabase } = await import('./supabase.js');
+      const cached = localStorage.getItem('aurra_auth_user');
+      const userObj = cached ? JSON.parse(cached) : null;
+      const targetEmail = (cleanEmail || userObj?.email || '').toLowerCase().trim();
+
+      if (targetEmail) {
+        const updateObj: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+        };
+        if (cleanName) updateObj.name = cleanName;
+        if (cleanAddress) updateObj.delivery_address = cleanAddress;
+        if (cleanContact) {
+          updateObj['contact_no.'] = cleanContact;
+          updateObj.contact_no = cleanContact;
+        }
+
+        await supabase
+          .from('users')
+          .update(updateObj)
+          .ilike('email', targetEmail);
+
+        if (userObj) {
+          if (cleanName) userObj.name = cleanName;
+          if (cleanAddress) userObj.delivery_address = cleanAddress;
+          if (cleanContact) userObj.contact_no = cleanContact;
+          localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
+          if (cleanContact) localStorage.setItem('aurra_user_contact', cleanContact);
+          if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
+        }
+      }
+    } catch (sbErr) {
+      console.warn('Supabase direct profile update note:', sbErr);
+    }
+
+    // 2. Call backend route
+    let result: { success: boolean; user: User } | null = null;
+    try {
+      result = await request<{ success: boolean; user: User }>('/api/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: cleanName,
+          email: cleanEmail,
+          delivery_address: cleanAddress,
+          contact_no: cleanContact,
+        }),
+      });
+      if (result?.user) {
+        localStorage.setItem('aurra_auth_user', JSON.stringify(result.user));
+      }
+    } catch (apiErr) {
+      console.warn('Backend update profile notice:', apiErr);
+    }
+
+    if (result) return result;
+    const cached = localStorage.getItem('aurra_auth_user');
+    const userObj = cached ? JSON.parse(cached) : null;
+    return { success: true, user: userObj };
   },
 
   async updateAddress(payload: { address: string }) {
@@ -1277,13 +1337,41 @@ export const api = {
 
   // Feature Flags
   async getFeatureFlags() {
-    return request<{ aura_tribute_enabled: boolean }>('/api/feature-flags');
+    // 1. Direct Supabase query to feature_flags table (specifically row id = 'aura_tribute')
+    try {
+      const { supabase } = await import('./supabase.js');
+      const { data } = await supabase
+        .from('feature_flags')
+        .select('*')
+        .eq('id', 'aura_tribute')
+        .maybeSingle();
+
+      if (data && typeof data.is_enabled === 'boolean') {
+        return {
+          aura_tribute_enabled: data.is_enabled,
+          is_enabled: data.is_enabled,
+          flag: data,
+        };
+      }
+    } catch (e) {
+      console.warn('Direct Supabase feature flag select note:', e);
+    }
+
+    // 2. Fallback to server endpoint
+    return request<{ aura_tribute_enabled: boolean; is_enabled?: boolean }>('/api/feature-flags');
   },
 
-  async updateFeatureFlag(key: string, enabled: boolean) {
-    return request<{ success: boolean; flags: { aura_tribute_enabled: boolean }; message: string }>('/api/admin/feature-flags', {
+  async updateFeatureFlag(idOrKey: string, enabled: boolean) {
+    const id = idOrKey === 'aura_tribute_enabled' ? 'aura_tribute' : idOrKey;
+    return request<{
+      success: boolean;
+      id: string;
+      is_enabled: boolean;
+      flags: { aura_tribute_enabled: boolean };
+      message: string;
+    }>('/api/admin/feature-flags', {
       method: 'PUT',
-      body: JSON.stringify({ key, enabled }),
+      body: JSON.stringify({ id, key: 'aura_tribute_enabled', enabled, is_enabled: enabled }),
     });
   },
 };

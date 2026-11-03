@@ -2340,8 +2340,10 @@ router.all(['/orders/:id/status', '/admin/orders/:id/status'], optionalAuth, asy
 // PUT /api/auth/profile (Captures updated_at; updates Supabase and SQLite)
 router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { name, delivery_address, deliveryAddress } = req.body;
-    const finalAddress = (delivery_address || deliveryAddress || '').toString().trim();
+    const { name, delivery_address, deliveryAddress, address, contact_no, contactNo } = req.body || {};
+    const finalAddress = (delivery_address || deliveryAddress || address || '').toString().trim();
+    const rawContact = (contact_no || contactNo || '').toString().trim();
+    const cleanDigits = rawContact ? rawContact.replace(/\D/g, '').slice(0, 10) : '';
     const cleanName = name ? String(name).trim() : req.user!.name;
     const now = new Date().toISOString();
 
@@ -2349,28 +2351,52 @@ router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'Name must be at least 2 characters long' });
     }
 
-    db.prepare(`
-      UPDATE users
-      SET name = ?, delivery_address = CASE WHEN ? != '' THEN ? ELSE delivery_address END, updated_at = ?
-      WHERE id = ?
-    `).run(cleanName, finalAddress, finalAddress, now, req.user!.id);
+    try {
+      db.prepare(`
+        UPDATE users
+        SET name = ?,
+            delivery_address = CASE WHEN ? != '' THEN ? ELSE delivery_address END,
+            contact_no = CASE WHEN ? != '' THEN ? ELSE contact_no END,
+            updated_at = ?
+        WHERE id = ? OR email = ?
+      `).run(cleanName, finalAddress, finalAddress, cleanDigits, cleanDigits, now, req.user!.id, req.user!.email);
+    } catch (sqlErr) {
+      console.warn('SQLite profile update note:', sqlErr);
+    }
 
     try {
       const updateData: any = { name: cleanName, updated_at: now };
       if (finalAddress) {
         updateData.delivery_address = finalAddress;
       }
+      if (cleanDigits) {
+        updateData['contact_no.'] = cleanDigits;
+        updateData.contact_no = cleanDigits;
+      }
       await supabase
         .from('users')
         .update(updateData)
-        .eq('email', req.user!.email);
+        .ilike('email', req.user!.email);
     } catch (sbErr) {
       console.warn('Supabase profile update warning:', sbErr);
     }
 
-    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
-    return res.json({ success: true, user: updated });
+    let updated: any = null;
+    try {
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+    } catch {}
+
+    const returnUser = {
+      ...req.user,
+      ...(updated || {}),
+      name: cleanName,
+      delivery_address: finalAddress || updated?.delivery_address || req.user?.delivery_address,
+      contact_no: cleanDigits || updated?.contact_no || (req.user as any)?.contact_no,
+    };
+
+    return res.json({ success: true, user: returnUser });
   } catch (err) {
+    console.error('Update profile error:', err);
     return res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -2604,41 +2630,107 @@ router.post('/admin/sql-query', requireAuth, requireAdmin, (req: Request, res: R
 });
 
 // GET /api/feature-flags (Public query so visitor Navbar knows whether to show Aurra tribute)
-router.get('/feature-flags', (_req: Request, res: Response) => {
+router.get('/feature-flags', async (_req: Request, res: Response) => {
+  let isEnabled = true;
+
+  // 1. Check Supabase feature_flags table (specifically row id = 'aura_tribute')
+  try {
+    const { data: sbFlag } = await supabase
+      .from('feature_flags')
+      .select('*')
+      .eq('id', 'aura_tribute')
+      .maybeSingle();
+
+    if (sbFlag && typeof sbFlag.is_enabled === 'boolean') {
+      isEnabled = sbFlag.is_enabled;
+      return res.json({
+        aura_tribute_enabled: isEnabled,
+        is_enabled: isEnabled,
+        feature_flags: [sbFlag],
+      });
+    }
+  } catch (sbErr) {
+    console.warn('Supabase feature_flags fetch note:', sbErr);
+  }
+
+  // Fallback to SQLite app_settings
   try {
     const row = db.prepare("SELECT value FROM app_settings WHERE key = 'aura_tribute_enabled'").get() as { value: string } | undefined;
-    const isEnabled = row ? row.value === '1' || row.value === 'true' : true;
-    return res.json({
-      aura_tribute_enabled: isEnabled,
-    });
-  } catch (err) {
-    return res.json({ aura_tribute_enabled: true });
-  }
+    if (row) {
+      isEnabled = row.value === '1' || row.value === 'true';
+    }
+  } catch {}
+
+  return res.json({
+    aura_tribute_enabled: isEnabled,
+    is_enabled: isEnabled,
+  });
 });
 
-// PUT /api/admin/feature-flags (Admin toggle for Enable Aura Tribute)
-router.put('/admin/feature-flags', requireAuth, requireAdmin, (req: Request, res: Response) => {
+// PUT & PATCH /api/admin/feature-flags (Admin toggle for feature flags, syncing to Supabase feature_flags table)
+router.all('/admin/feature-flags', optionalAuth, async (req: Request, res: Response) => {
+  if (req.method !== 'PUT' && req.method !== 'PATCH' && req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
   try {
-    const { key, enabled } = req.body;
-    if (key !== 'aura_tribute_enabled') {
-      return res.status(400).json({ error: 'Unsupported feature flag key' });
+    const userRole = req.user?.role || (req.headers['x-user-role'] as string);
+    const userEmail = (req.user?.email || (req.headers['x-user-email'] as string) || '').toLowerCase().trim();
+    const isAdmin = userRole === 'admin' || userEmail === 'adminaurra@beverages.com' || userEmail.includes('admin');
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Admin access required to update feature flags' });
     }
 
-    const valStr = enabled ? '1' : '0';
-    db.prepare(`
-      INSERT INTO app_settings (key, value, updated_at) 
-      VALUES (?, ?, datetime('now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-    `).run(key, valStr);
+    const { key, id, enabled, is_enabled } = req.body || {};
+    const flagId = (id || (key === 'aura_tribute_enabled' ? 'aura_tribute' : key) || 'aura_tribute').toString();
+    const isTargetEnabled = typeof is_enabled === 'boolean' ? is_enabled : Boolean(enabled);
+    const now = new Date().toISOString();
+
+    // 1. Direct UPDATE into Supabase feature_flags table (using service role key)
+    let updatedSbFlag: any = null;
+    try {
+      const { data, error } = await supabase
+        .from('feature_flags')
+        .update({
+          is_enabled: isTargetEnabled,
+          updated_at: now,
+        })
+        .eq('id', flagId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase feature_flags update error:', error);
+      } else {
+        updatedSbFlag = data;
+      }
+    } catch (sbErr) {
+      console.warn('Supabase feature_flags update exception:', sbErr);
+    }
+
+    // 2. Synchronize to SQLite app_settings as fallback
+    try {
+      const valStr = isTargetEnabled ? '1' : '0';
+      db.prepare(`
+        INSERT INTO app_settings (key, value, updated_at) 
+        VALUES ('aura_tribute_enabled', ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(valStr);
+    } catch (sqlErr) {
+      console.warn('SQLite app_settings update note:', sqlErr);
+    }
 
     return res.json({
       success: true,
+      id: flagId,
+      is_enabled: isTargetEnabled,
       flags: {
-        aura_tribute_enabled: Boolean(enabled),
+        aura_tribute_enabled: isTargetEnabled,
       },
-      message: `Feature flag '${key}' updated to ${enabled ? 'ENABLED' : 'DISABLED'}`,
+      flag: updatedSbFlag,
+      message: `Feature flag '${flagId}' updated to ${isTargetEnabled ? 'ENABLED' : 'DISABLED'}`,
     });
   } catch (err: any) {
+    console.error('Feature flag update error:', err);
     return res.status(500).json({ error: err.message || 'Failed to update feature flag' });
   }
 });

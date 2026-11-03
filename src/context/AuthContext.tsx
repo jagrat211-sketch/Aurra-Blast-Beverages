@@ -12,7 +12,7 @@ interface AuthContextType {
   resendCode: (email: string) => Promise<{ success: boolean; devVerificationCode?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  updateProfile: (name: string) => Promise<{ success: boolean; user: User }>;
+  updateProfile: (data: string | { name?: string; address?: string; contactNo?: string; email?: string }) => Promise<{ success: boolean; user: User }>;
   updateAddress: (address: string) => Promise<{ success: boolean; user: User; message: string }>;
   updateContactNo: (contactNo: string) => Promise<{ success: boolean; user: User; message: string }>;
   updateDeliveryInfo: (address: string, contactNo: string) => Promise<{ success: boolean; user: User }>;
@@ -148,8 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const updateProfile = async (name: string) => {
-    const res = await api.updateProfile({ name });
+  const updateProfile = async (data: string | { name?: string; address?: string; contactNo?: string; email?: string }) => {
+    const payload = typeof data === 'string' ? { name: data } : data;
+    const res = await api.updateProfile(payload);
     if (res.user) {
       setUser(res.user);
       setCartUser(res.user);
