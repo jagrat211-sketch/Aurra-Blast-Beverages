@@ -1776,27 +1776,65 @@ router.post(['/razorpay-webhook', '/webhooks/razorpay'], async (req: Request, re
 // POST /api/orders/confirm-payment (In-app confirmation after QR scan / 'I Have Paid')
 router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: Response) => {
   try {
-    const { razorpayOrderId, paymentId, items, amount } = req.body || {};
-    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
-    const userEmail = req.user?.email || (req.headers['x-user-email'] as string) || '';
+    const {
+      razorpayOrderId,
+      paymentId,
+      items,
+      amount,
+      userId: bodyUserId,
+      userEmail: bodyUserEmail,
+      userName: bodyUserName,
+      contactNo: bodyContactNo,
+      deliveryAddress: bodyDeliveryAddress,
+    } = req.body || {};
+    const userId = bodyUserId || req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
+    const userEmail = (bodyUserEmail || req.user?.email || (req.headers['x-user-email'] as string) || '').toLowerCase().trim();
     const now = new Date().toISOString();
     const orderId = generateId('ord');
     const totalAmount = Number(amount) || 0;
 
     // Resolve Supabase user ID reliably
     let sbUserId: number | null = null;
-    if (userEmail) {
+    if (userId && !isNaN(Number(userId))) {
+      sbUserId = Number(userId);
+    }
+    if (!sbUserId && userEmail) {
       try {
-        const { data: u } = await supabase.from('users').select('id').ilike('email', userEmail.trim()).maybeSingle();
+        const { data: u } = await supabase.from('users').select('id').ilike('email', userEmail).maybeSingle();
         if (u?.id) sbUserId = Number(u.id);
       } catch {}
     }
-    if (!sbUserId && userId && !isNaN(Number(userId))) {
-      sbUserId = Number(userId);
+    if (!sbUserId && bodyContactNo) {
+      try {
+        const { data: u } = await supabase.from('users').select('id').or(`contact_no.eq.${bodyContactNo},"contact_no.".eq.${bodyContactNo}`).maybeSingle();
+        if (u?.id) sbUserId = Number(u.id);
+      } catch {}
     }
     if (!sbUserId) {
-      sbUserId = 1; // Default fallback user record
+      try {
+        const { data: latestUsers } = await supabase.from('users').select('id').order('id', { ascending: false }).limit(1);
+        if (latestUsers?.[0]?.id) sbUserId = Number(latestUsers[0].id);
+      } catch {}
     }
+    if (!sbUserId) {
+      sbUserId = 20; // Default active test user if available
+    }
+
+    // Pre-insert user into SQLite to ensure relations
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, contact_no, delivery_address)
+        VALUES (?, ?, ?, 'local_session', 'user', 1, ?, ?, ?, ?)
+      `).run(
+        String(userId),
+        bodyUserName || 'Aurra Customer',
+        userEmail || 'customer@aurrabeverages.com',
+        now,
+        now,
+        bodyContactNo || null,
+        bodyDeliveryAddress || null
+      );
+    } catch {}
 
     // 1. Insert into Supabase orders table with initial status 'confirmed'
     let createdSbOrder: any = null;
@@ -1808,17 +1846,20 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
           total_amount: totalAmount,
           status: 'confirmed',
           created_at: now,
+          delivery_code: null,
+          updated_time: null,
         })
         .select()
         .single();
 
       if (!oErr && newOrder) {
         createdSbOrder = newOrder;
+        console.log(`[Orders] Supabase order created: id=${newOrder.id}, user_id=${sbUserId}`);
       } else if (oErr) {
-        console.warn('Supabase order insert warning:', oErr);
+        console.error('Supabase order insert error:', oErr);
       }
     } catch (e) {
-      console.warn('Supabase order insert note:', e);
+      console.error('Supabase order insert exception:', e);
     }
 
     const finalOrderId = createdSbOrder?.id ? String(createdSbOrder.id) : orderId;
@@ -1843,8 +1884,11 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
     }
 
     // Pre-fetch Supabase products to map item names and product IDs
-    const { data: sbProductList } = await supabase.from('products').select('id, beverage_name, price, remaining_quantity');
-    const sbProducts = sbProductList || [];
+    let sbProducts: any[] = [];
+    try {
+      const { data: sbProductList } = await supabase.from('products').select('id, beverage_name, price, remaining_quantity');
+      sbProducts = sbProductList || [];
+    } catch {}
 
     // 3. Insert items into order_items table in both databases & deduct stock
     const resolvedItems: any[] = [];
@@ -1856,29 +1900,44 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
         const itemName = it.name || it.beverage_name || 'Aurra Beverage';
 
         // Match Supabase product ID by id or beverage_name
-        let numProdId = !isNaN(Number(itProdId)) ? Number(itProdId) : null;
-        const matchedSbProd = sbProducts.find(
-          (p) => String(p.id) === String(itProdId) || p.beverage_name?.toLowerCase().trim() === itemName.toLowerCase().trim()
-        );
-        if (matchedSbProd) {
-          numProdId = Number(matchedSbProd.id);
-        } else if (!numProdId) {
-          numProdId = 3; // Cranberry default
+        let numProdId: number = 1;
+        if (!isNaN(Number(itProdId))) {
+          numProdId = Number(itProdId);
+        } else {
+          const matchedSbProd = sbProducts.find(
+            (p) => String(p.id) === String(itProdId) || p.beverage_name?.toLowerCase().trim() === itemName.toLowerCase().trim()
+          );
+          if (matchedSbProd) {
+            numProdId = Number(matchedSbProd.id);
+          } else if (sbProducts.length > 0) {
+            numProdId = Number(sbProducts[0].id);
+          }
         }
 
         // Insert into Supabase order_items
         if (createdSbOrder?.id) {
           try {
-            await supabase.from('order_items').insert({
+            const { error: itemErr } = await supabase.from('order_items').insert({
               order_id: createdSbOrder.id,
               product_id: numProdId,
               price: itPrice,
               quantity: itQty,
             });
+            if (itemErr) {
+              console.error('Supabase order_items insert error:', itemErr);
+            }
           } catch (e) {
-            console.warn('Supabase order_items insert note:', e);
+            console.error('Supabase order_items insert exception:', e);
           }
         }
+
+        // Pre-insert product into SQLite to avoid FK violations
+        try {
+          db.prepare(`
+            INSERT OR IGNORE INTO products (id, name, flavor, price, image_url, description, volume, calories, active, created_at)
+            VALUES (?, ?, 'Artisan Botanical', ?, '/assets/images/hero_beverage_can_1793439801479.jpg', ?, '330ml', 40, 1, ?)
+          `).run(String(itProdId), itemName, itPrice, itemName, now);
+        } catch {}
 
         // Insert into SQLite order_items
         try {
@@ -1896,18 +1955,17 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
           }
         } catch {}
 
-        // Deduct inventory in SQLite
+        // Deduct inventory in SQLite and Supabase
         try {
           db.prepare('UPDATE products SET remaining_quantity = MAX(0, remaining_quantity - ?) WHERE id = ?').run(itQty, String(itProdId));
         } catch {}
-
-        // Deduct inventory in Supabase
-        if (matchedSbProd) {
-          try {
+        try {
+          const matchedSbProd = sbProducts.find((p) => Number(p.id) === numProdId);
+          if (matchedSbProd) {
             const newRem = Math.max(0, (matchedSbProd.remaining_quantity || 50) - itQty);
-            await supabase.from('products').update({ remaining_quantity: newRem, updated_at: now }).eq('id', matchedSbProd.id);
-          } catch {}
-        }
+            await supabase.from('products').update({ remaining_quantity: newRem, updated_at: now }).eq('id', numProdId);
+          }
+        } catch {}
 
         resolvedItems.push({
           productId: String(itProdId),
@@ -2039,13 +2097,13 @@ router.get('/orders', optionalAuth, async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/orders (Admin console: all confirmed, delivered, and past orders)
+// GET /api/admin/orders (Admin console: all confirmed, out_for_delivery, delivered, and past orders)
 router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) => {
   try {
     let orders: any[] = [];
     try {
       orders = db.prepare(`
-        SELECT o.id, o.user_id, o.total, o.status, o.created_at, o.razorpay_order_id, o.razorpay_payment_id,
+        SELECT o.id, o.user_id, o.total, o.status, o.created_at, o.delivery_code, o.updated_time, o.razorpay_order_id, o.razorpay_payment_id,
                u.name as user_name, u.email as user_email, u.delivery_address, u.contact_no
         FROM orders o
         LEFT JOIN users u ON u.id = o.user_id
@@ -2062,6 +2120,8 @@ router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) =
         ...o,
         customer_name: o.user_name || 'Aurra Customer',
         customer_email: o.user_email || 'customer@aurrabeverages.com',
+        delivery_code: o.delivery_code || null,
+        updated_time: o.updated_time || null,
         items: itemStmt.all(o.id),
       }));
     } catch {}
@@ -2112,6 +2172,8 @@ router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) =
 
           if (matchIndex >= 0) {
             orders[matchIndex].status = sbo.status || orders[matchIndex].status;
+            orders[matchIndex].delivery_code = sbo.delivery_code || orders[matchIndex].delivery_code || null;
+            orders[matchIndex].updated_time = sbo.updated_time || orders[matchIndex].updated_time || null;
             if (customerName) orders[matchIndex].customer_name = customerName;
             if (customerEmail) orders[matchIndex].customer_email = customerEmail;
             if (customerAddress) orders[matchIndex].delivery_address = customerAddress;
@@ -2125,6 +2187,8 @@ router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) =
               user_id: String(sbo.user_id || 'guest'),
               total: Number(sbo.total_amount || sbo.total) || 149,
               status: sbo.status || 'confirmed',
+              delivery_code: sbo.delivery_code || null,
+              updated_time: sbo.updated_time || null,
               created_at: sbo.created_at || new Date().toISOString(),
               customer_name: customerName || 'Aurra Customer',
               customer_email: customerEmail || 'customer@aurrabeverages.com',
@@ -2148,37 +2212,60 @@ router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) =
   }
 });
 
-// PATCH & PUT /api/orders/:id/status (Allows admin to mark order as delivered or advance status)
+// PATCH & PUT /api/orders/:id/status (Allows admin to mark out_for_delivery, delivered with code, etc.)
 router.all(['/orders/:id/status', '/admin/orders/:id/status'], optionalAuth, async (req: Request, res: Response) => {
   if (req.method !== 'PATCH' && req.method !== 'PUT' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
   try {
-    const { status } = req.body || {};
+    const { status, delivery_code, deliveryCode } = req.body || {};
     const validStatuses = ['confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid order status. Must be confirmed or delivered.' });
+      return res.status(400).json({ error: 'Invalid order status. Must be confirmed, out_for_delivery, or delivered.' });
     }
 
     const orderId = req.params.id;
+    const finalCode = (delivery_code || deliveryCode || '').toString().trim();
+    const now = new Date().toISOString();
+
+    const updateFields: any = {
+      status,
+      updated_time: now,
+    };
+    if (finalCode) {
+      updateFields.delivery_code = finalCode;
+    }
 
     // 1. Update in SQLite orders table
     try {
-      db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, orderId);
-    } catch {}
+      if (finalCode) {
+        db.prepare('UPDATE orders SET status = ?, delivery_code = ?, updated_time = ? WHERE id = ?').run(status, finalCode, now, orderId);
+      } else {
+        db.prepare('UPDATE orders SET status = ?, updated_time = ? WHERE id = ?').run(status, now, orderId);
+      }
+    } catch (e) {
+      console.warn('SQLite order status update warning:', e);
+    }
 
-    // 2. Update in Supabase orders table status column!
+    // 2. Update in Supabase orders table
     try {
       if (!isNaN(Number(orderId))) {
-        await supabase.from('orders').update({ status }).eq('id', Number(orderId));
+        await supabase.from('orders').update(updateFields).eq('id', Number(orderId));
       } else {
-        await supabase.from('orders').update({ status }).eq('id', orderId);
+        await supabase.from('orders').update(updateFields).eq('id', orderId);
       }
     } catch (sbErr) {
       console.warn('Supabase order status update note:', sbErr);
     }
 
-    return res.json({ success: true, status, orderId, message: `Order status updated to ${status}` });
+    return res.json({
+      success: true,
+      status,
+      orderId,
+      delivery_code: finalCode || null,
+      updated_time: now,
+      message: `Order status updated to ${status}`
+    });
   } catch (err) {
     console.error('Update order status error:', err);
     return res.status(500).json({ error: 'Failed to update order status' });

@@ -164,6 +164,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
         paymentId: `pay_${Date.now()}`,
         items: payloadItems,
         amount: grandTotal,
+        userId: user?.id,
+        userEmail: user?.email,
+        userName: user?.name,
+        contactNo: user?.contact_no,
+        deliveryAddress: user?.delivery_address,
       });
 
       // Trigger celebratory confetti

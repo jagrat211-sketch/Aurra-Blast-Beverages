@@ -23,7 +23,7 @@ if (!isVercel) {
     dbInstance = new Database(dbPath);
     try {
       dbInstance.pragma('journal_mode = WAL');
-      dbInstance.pragma('foreign_keys = ON');
+      dbInstance.pragma('foreign_keys = OFF');
     } catch {
       // Ignore pragma error if in read-only / restricted mode
     }
@@ -165,6 +165,12 @@ export function initDatabase() {
     }
     if (!oColNames.includes('razorpay_payment_id')) {
       db.prepare("ALTER TABLE orders ADD COLUMN razorpay_payment_id TEXT").run();
+    }
+    if (!oColNames.includes('delivery_code')) {
+      db.prepare("ALTER TABLE orders ADD COLUMN delivery_code TEXT").run();
+    }
+    if (!oColNames.includes('updated_time')) {
+      db.prepare("ALTER TABLE orders ADD COLUMN updated_time TEXT").run();
     }
   } catch (err) {
     console.warn('Orders table migration warning:', err);

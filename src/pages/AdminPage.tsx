@@ -26,7 +26,10 @@ import {
   MapPin,
   Phone,
   Calendar,
-  Check
+  Check,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useFeatureFlags } from '../context/FeatureFlagContext';
@@ -97,8 +100,18 @@ export const AdminPage: React.FC = () => {
   // Orders Management (6th Tab)
   const [adminOrders, setAdminOrders] = useState<any[]>([]);
   const [loadingAdminOrders, setLoadingAdminOrders] = useState(false);
-  const [adminOrderFilter, setAdminOrderFilter] = useState<'confirmed' | 'delivered' | 'all'>('confirmed');
+  const [adminOrderFilter, setAdminOrderFilter] = useState<'confirmed' | 'out_for_delivery' | 'delivered' | 'all'>('confirmed');
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  // Sorting state for Orders table across all columns including Email
+  type OrderSortCol = 'sr' | 'date' | 'id' | 'customer_name' | 'email' | 'contact_no' | 'total' | 'status';
+  const [orderSortCol, setOrderSortCol] = useState<OrderSortCol>('date');
+  const [orderSortDir, setOrderSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Pop-up modal state for entering verification number before marking delivered
+  const [deliveryModalOrder, setDeliveryModalOrder] = useState<any | null>(null);
+  const [deliveryCode, setDeliveryCode] = useState<string>('');
+  const [submittingDelivery, setSubmittingDelivery] = useState(false);
 
   // Deleting product state & confirmation modal
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
@@ -175,16 +188,60 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  const handleMarkDelivered = async (orderId: string) => {
-    setUpdatingOrderId(orderId);
+  const handleSort = (col: OrderSortCol) => {
+    if (orderSortCol === col) {
+      setOrderSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setOrderSortCol(col);
+      setOrderSortDir('asc');
+    }
+  };
+
+  const handleOpenDeliveryModal = (ord: any) => {
+    setDeliveryModalOrder(ord);
+    // Generate a default 6-digit verification code or let admin enter their own
+    setDeliveryCode(Math.floor(100000 + Math.random() * 900000).toString());
+  };
+
+  const handleConfirmDeliveryFromModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deliveryModalOrder) return;
+    if (!deliveryCode.trim()) {
+      alert('Please enter a delivery verification / tracking number');
+      return;
+    }
+
+    setSubmittingDelivery(true);
     try {
-      await api.updateOrderStatus(orderId, 'delivered');
+      await api.updateOrderStatus(deliveryModalOrder.id, 'delivered', deliveryCode.trim());
       await loadAdminOrders();
       await loadOverview();
+      setDeliveryModalOrder(null);
+      setDeliveryCode('');
     } catch (err: any) {
       alert(err.message || 'Failed to update order status');
     } finally {
+      setSubmittingDelivery(false);
+    }
+  };
+
+  const handleMarkOutForDelivery = async (orderId: string) => {
+    setUpdatingOrderId(orderId);
+    try {
+      await api.updateOrderStatus(orderId, 'out_for_delivery');
+      await loadAdminOrders();
+      await loadOverview();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update order status to Out for Delivery');
+    } finally {
       setUpdatingOrderId(null);
+    }
+  };
+
+  const handleMarkDelivered = (orderId: string) => {
+    const order = adminOrders.find((o) => String(o.id) === String(orderId));
+    if (order) {
+      handleOpenDeliveryModal(order);
     }
   };
 
@@ -531,11 +588,12 @@ export const AdminPage: React.FC = () => {
           </span>
         </button>
 
-        {/* 6th Tab: Orders Management */}
+        {/* 6th Tab: Orders Customer Order */}
         <button
           onClick={() => {
             setActiveTab('orders');
             loadAdminOrders();
+            loadUsers();
           }}
           className={`pb-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'orders'
@@ -544,7 +602,7 @@ export const AdminPage: React.FC = () => {
           }`}
         >
           <Package className="h-4 w-4" />
-          <span>Orders Management</span>
+          <span>Orders Customer Order</span>
           <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.2 text-[9px] font-black text-amber-700 dark:text-amber-300">
             6th Tab
           </span>
@@ -1359,26 +1417,32 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 6: Orders Management (Beside 5th Tab) */}
+      {/* TAB 6: Orders Customer order */}
       {activeTab === 'orders' && (
         <div className="mt-8 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Customer Orders &amp; Fulfillment</h2>
-                <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-2 py-0.5 text-[10px] font-black text-amber-700 dark:text-amber-300">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-xl font-black text-slate-900 dark:text-white">Orders</h2>
+                <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-black text-amber-600 dark:text-amber-400">
+                  Customer order
+                </span>
+                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-400">
                   6th Tab
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Track customer delivery addresses, verify confirmed orders, and mark them as delivered to sync database status
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Customer orders listing with column sorting, delivery verification pop-up, and status tracking.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={loadAdminOrders}
+                onClick={() => {
+                  loadAdminOrders();
+                  loadUsers();
+                }}
                 className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition-colors shadow-xs"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${loadingAdminOrders ? 'animate-spin' : ''}`} />
@@ -1387,7 +1451,7 @@ export const AdminPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Filter Pills Bar (Confirmed is Default) */}
+          {/* Filter Bar (Confirmed Orders is the default listing) */}
           <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 w-fit">
             <button
               type="button"
@@ -1403,7 +1467,25 @@ export const AdminPage: React.FC = () => {
               <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-black ${
                 adminOrderFilter === 'confirmed' ? 'bg-white/20 text-white' : 'bg-amber-200/60 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
               }`}>
-                {adminOrders.filter((o) => o.status === 'confirmed' || (o.status !== 'delivered' && o.status !== 'cancelled')).length}
+                {adminOrders.filter((o) => o.status === 'confirmed').length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminOrderFilter('out_for_delivery')}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                adminOrderFilter === 'out_for_delivery'
+                  ? 'bg-sky-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              <Truck className="h-3.5 w-3.5" />
+              <span>Out for Delivery</span>
+              <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                adminOrderFilter === 'out_for_delivery' ? 'bg-white/20 text-white' : 'bg-sky-200/60 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300'
+              }`}>
+                {adminOrders.filter((o) => o.status === 'out_for_delivery').length}
               </span>
             </button>
 
@@ -1439,17 +1521,21 @@ export const AdminPage: React.FC = () => {
             </button>
           </div>
 
-          {/* Orders Listing Table */}
+          {/* Customer Orders Listing Table */}
           {loadingAdminOrders ? (
             <div className="py-20 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
               <RefreshCw className="h-7 w-7 animate-spin text-amber-500" />
-              <span>Loading orders records...</span>
+              <span>Loading customer orders records...</span>
             </div>
           ) : (
             (() => {
+              // 1. Filter orders according to selected tab (Confirmed by default)
               const filteredList = adminOrders.filter((o) => {
                 if (adminOrderFilter === 'confirmed') {
-                  return o.status === 'confirmed' || (o.status !== 'delivered' && o.status !== 'cancelled');
+                  return o.status === 'confirmed';
+                }
+                if (adminOrderFilter === 'out_for_delivery') {
+                  return o.status === 'out_for_delivery';
                 }
                 if (adminOrderFilter === 'delivered') {
                   return o.status === 'delivered';
@@ -1463,164 +1549,409 @@ export const AdminPage: React.FC = () => {
                     <Package className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
                     <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
                       {adminOrderFilter === 'confirmed'
-                        ? 'No confirmed orders awaiting delivery'
+                        ? 'No confirmed orders awaiting delivery dispatch'
+                        : adminOrderFilter === 'out_for_delivery'
+                        ? 'No orders currently out for delivery'
                         : adminOrderFilter === 'delivered'
                         ? 'No delivered orders found'
                         : 'No orders recorded yet'}
                     </h3>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {adminOrderFilter === 'confirmed'
-                        ? 'New customer orders placed through the checkout will appear here automatically.'
+                        ? 'New customer orders placed through the checkout will appear here automatically with confirmed status.'
+                        : adminOrderFilter === 'out_for_delivery'
+                        ? 'Orders marked Out for Delivery will appear here until admin verifies the delivery number.'
                         : 'Fulfilled orders will appear here once marked as delivered.'}
                     </p>
                   </div>
                 );
               }
 
+              // Helper to resolve customer name using customer_id / user_id
+              const resolveCustomerName = (ord: any): string => {
+                if (ord.customer_name && ord.customer_name !== 'Aurra Customer') {
+                  return ord.customer_name;
+                }
+                if (ord.user_name) return ord.user_name;
+                if (ord.user_id) {
+                  const matched = usersList.find((u) => String(u.id) === String(ord.user_id));
+                  if (matched?.name) return matched.name;
+                }
+                return ord.customer_name || 'Customer #' + (ord.user_id || 'guest');
+              };
+
+              // Helper to resolve customer email for the Email column
+              const resolveCustomerEmail = (ord: any): string => {
+                if (ord.customer_email && ord.customer_email !== 'customer@aurrabeverages.com') {
+                  return ord.customer_email;
+                }
+                if (ord.user_email && ord.user_email !== 'customer@aurrabeverages.com') {
+                  return ord.user_email;
+                }
+                if (ord.user_id) {
+                  const matched = usersList.find((u) => String(u.id) === String(ord.user_id));
+                  if (matched?.email) return matched.email;
+                }
+                return ord.customer_email || '—';
+              };
+
+              // Helper to resolve customer contact number
+              const resolveCustomerContact = (ord: any): string => {
+                if (ord.contact_no) return ord.contact_no;
+                if (ord.user_id) {
+                  const matched = usersList.find((u) => String(u.id) === String(ord.user_id));
+                  if (matched?.contact_no) return matched.contact_no;
+                }
+                return 'N/A';
+              };
+
+              // Assign Sr. No. to each item
+              const indexedList = filteredList.map((ord, idx) => ({
+                ...ord,
+                srNo: idx + 1,
+                resolvedName: resolveCustomerName(ord),
+                resolvedEmail: resolveCustomerEmail(ord),
+                resolvedContact: resolveCustomerContact(ord),
+              }));
+
+              // 2. Sort across requested column
+              const sortedList = [...indexedList].sort((a, b) => {
+                let valA: any = '';
+                let valB: any = '';
+
+                switch (orderSortCol) {
+                  case 'sr':
+                    valA = a.srNo;
+                    valB = b.srNo;
+                    break;
+                  case 'date':
+                    valA = new Date(a.created_at || 0).getTime();
+                    valB = new Date(b.created_at || 0).getTime();
+                    break;
+                  case 'id':
+                    valA = String(a.id || '');
+                    valB = String(b.id || '');
+                    break;
+                  case 'customer_name':
+                    valA = a.resolvedName.toLowerCase();
+                    valB = b.resolvedName.toLowerCase();
+                    break;
+                  case 'email':
+                    valA = a.resolvedEmail.toLowerCase();
+                    valB = b.resolvedEmail.toLowerCase();
+                    break;
+                  case 'contact_no':
+                    valA = String(a.resolvedContact || '');
+                    valB = String(b.resolvedContact || '');
+                    break;
+                  case 'total':
+                    valA = Number(a.total) || 0;
+                    valB = Number(b.total) || 0;
+                    break;
+                  case 'status':
+                    valA = String(a.status || '');
+                    valB = String(b.status || '');
+                    break;
+                }
+
+                if (valA < valB) return orderSortDir === 'asc' ? -1 : 1;
+                if (valA > valB) return orderSortDir === 'asc' ? 1 : -1;
+                return 0;
+              });
+
+              const renderTh = (label: string, colKey: OrderSortCol, align: 'left' | 'center' | 'right' = 'left') => {
+                const isActive = orderSortCol === colKey;
+                return (
+                  <th
+                    scope="col"
+                    onClick={() => handleSort(colKey)}
+                    className={`px-4 py-3.5 text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors ${
+                      align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'
+                    }`}
+                  >
+                    <div className={`inline-flex items-center gap-1.5 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start'}`}>
+                      <span>{label}</span>
+                      {isActive ? (
+                        orderSortDir === 'asc' ? (
+                          <ArrowUp className="h-3.5 w-3.5 text-amber-500 stroke-[2.5]" />
+                        ) : (
+                          <ArrowDown className="h-3.5 w-3.5 text-amber-500 stroke-[2.5]" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 text-slate-400 opacity-60" />
+                      )}
+                    </div>
+                  </th>
+                );
+              };
+
               return (
-                <div className="space-y-4">
-                  {filteredList.map((ord: any) => {
-                    const isDelivered = ord.status === 'delivered';
-                    const dateFormatted = ord.created_at
-                      ? new Date(ord.created_at).toLocaleString('en-IN', {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        })
-                      : 'Recently';
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="border-b border-slate-200 bg-slate-100/70 dark:border-slate-800 dark:bg-slate-800/80">
+                      <tr>
+                        {renderTh('Sr No.', 'sr')}
+                        {renderTh('Date', 'date')}
+                        {renderTh('Order ID', 'id')}
+                        {renderTh('Customer Name', 'customer_name')}
+                        {renderTh('Email', 'email')}
+                        {renderTh('Customer Contact Number', 'contact_no')}
+                        {renderTh('Order Value', 'total')}
+                        {renderTh('Status', 'status')}
+                        <th scope="col" className="px-4 py-3.5 text-center text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {sortedList.map((ord: any) => {
+                        const isDelivered = ord.status === 'delivered';
+                        const isOutForDelivery = ord.status === 'out_for_delivery';
+                        const dateFormatted = ord.created_at
+                          ? new Date(ord.created_at).toLocaleString('en-IN', {
+                              dateStyle: 'short',
+                              timeStyle: 'short',
+                            })
+                          : 'Recent';
 
-                    return (
-                      <div
-                        key={ord.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all hover:border-amber-300/60 dark:hover:border-amber-700/60"
-                      >
-                        {/* Order Header Bar */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                              #{ord.id}
-                            </span>
-                            <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {dateFormatted}
-                            </span>
+                        return (
+                          <tr
+                            key={ord.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            {/* Sr number */}
+                            <td className="px-4 py-3.5 font-bold text-slate-500 dark:text-slate-400 tabular-nums">
+                              {ord.srNo}
+                            </td>
 
-                            {/* Status Column / Badge */}
-                            {isDelivered ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200/60">
-                                <CheckCircle2 className="h-3 w-3" />
-                                <span>Delivered</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/60">
-                                <Clock className="h-3 w-3 text-amber-600 animate-pulse" />
-                                <span>Confirmed (Pending Delivery)</span>
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Action Button: Mark as Delivered */}
-                          <div className="flex items-center gap-3">
-                            <div className="text-right">
-                              <span className="text-[10px] font-bold text-slate-400 block uppercase">Order Total</span>
-                              <span className="text-base font-black text-slate-900 dark:text-white tabular-nums">
-                                ₹{ord.total}
-                              </span>
-                            </div>
-
-                            {!isDelivered ? (
-                              <button
-                                type="button"
-                                disabled={updatingOrderId === ord.id}
-                                onClick={() => handleMarkDelivered(ord.id)}
-                                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-                              >
-                                {updatingOrderId === ord.id ? (
-                                  <>
-                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                    <span>Updating...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Check className="h-3.5 w-3.5" />
-                                    <span>Mark as Delivered</span>
-                                  </>
-                                )}
-                              </button>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                                <span>Fulfilled</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Customer Delivery Details Strip */}
-                        <div className="mt-3.5 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-slate-50/70 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                          <div>
-                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1">
-                              Customer Contact
-                            </span>
-                            <div className="font-bold text-slate-800 dark:text-slate-200">
-                              {ord.customer_name || 'Aurra Customer'}
-                            </div>
-                            <div className="text-slate-500 dark:text-slate-400 truncate">
-                              {ord.customer_email || 'customer@aurrabeverages.com'}
-                            </div>
-                            {ord.contact_no && (
-                              <div className="mt-1 flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
-                                <Phone className="h-3 w-3" />
-                                <span>+91 {ord.contact_no}</span>
+                            {/* Date */}
+                            <td className="px-4 py-3.5 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                              <div className="flex items-center gap-1.5 font-medium">
+                                <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                <span>{dateFormatted}</span>
                               </div>
-                            )}
-                          </div>
+                            </td>
 
-                          <div>
-                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1">
-                              Delivery Address
-                            </span>
-                            <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
-                              <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-                              <span className="font-semibold leading-relaxed">
-                                {ord.delivery_address || 'No street address provided'}
+                            {/* Order ID */}
+                            <td className="px-4 py-3.5 font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                              <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                                #{ord.id}
                               </span>
-                            </div>
-                          </div>
-                        </div>
+                            </td>
 
-                        {/* Ordered Items Preview */}
-                        {ord.items && ord.items.length > 0 && (
-                          <div className="mt-3 pt-2">
-                            <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider mb-1.5">
-                              Ordered Beverages ({ord.items.length})
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                              {ord.items.map((it: any, idx: number) => (
-                                <div
-                                  key={idx}
-                                  className="inline-flex items-center gap-2 rounded-lg bg-white dark:bg-slate-800 px-2.5 py-1 text-xs border border-slate-200/70 dark:border-slate-700"
-                                >
-                                  <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[10px] font-black">
-                                    {it.qty || it.quantity || 1}x
-                                  </span>
-                                  <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                    {it.name || it.name_snapshot || 'Beverage'}
-                                  </span>
-                                  <span className="font-bold text-slate-500 tabular-nums text-[11px]">
-                                    ₹{(Number(it.price || it.price_snapshot) || 149) * (Number(it.qty || it.quantity) || 1)}
-                                  </span>
+                            {/* Customer Name */}
+                            <td className="px-4 py-3.5 font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                              <span>{ord.resolvedName}</span>
+                            </td>
+
+                            {/* Email Column */}
+                            <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap font-medium">
+                              <span className="font-mono text-[11px]">{ord.resolvedEmail}</span>
+                            </td>
+
+                            {/* Customer Contact Number */}
+                            <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300 whitespace-nowrap font-medium">
+                              {ord.resolvedContact && ord.resolvedContact !== 'N/A' ? (
+                                <div className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                                  <Phone className="h-3 w-3" />
+                                  <span>+91 {ord.resolvedContact}</span>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+
+                            {/* Order Value (Price) */}
+                            <td className="px-4 py-3.5 font-black text-slate-900 dark:text-white tabular-nums whitespace-nowrap">
+                              ₹{ord.total}
+                            </td>
+
+                            {/* Status */}
+                            <td className="px-4 py-3.5 whitespace-nowrap">
+                              {isDelivered ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200/60">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                  <span>Delivered</span>
+                                </span>
+                              ) : isOutForDelivery ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-bold text-sky-700 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-300/60">
+                                  <Truck className="h-3 w-3 text-sky-600 animate-pulse" />
+                                  <span>Out for Delivery</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/60">
+                                  <Clock className="h-3 w-3 text-amber-600 animate-pulse" />
+                                  <span>Confirmed</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Action: Buttons for Out for Delivery and Deliver with modal */}
+                            <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                              {ord.status === 'confirmed' ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={updatingOrderId === ord.id}
+                                    onClick={() => handleMarkOutForDelivery(ord.id)}
+                                    title="Mark order as Out for Delivery"
+                                    className="inline-flex items-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-700 px-2.5 py-1.5 text-xs font-bold text-white shadow-xs transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                                  >
+                                    <Truck className="h-3.5 w-3.5" />
+                                    <span>Out for Delivery</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenDeliveryModal(ord)}
+                                    title="Mark order as Delivered"
+                                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1.5 text-xs font-bold text-white shadow-xs transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                                  >
+                                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                                    <span>Deliver</span>
+                                  </button>
+                                </div>
+                              ) : isOutForDelivery ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDeliveryModal(ord)}
+                                  title="Enter verification number to mark as Delivered"
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                                >
+                                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                                  <span>Mark Delivered</span>
+                                </button>
+                              ) : (
+                                <div className="inline-flex flex-col items-center">
+                                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-bold">
+                                    <CheckCircle2 className="h-4 w-4" />
+                                    <span>Fulfilled</span>
+                                  </span>
+                                  {ord.delivery_code && (
+                                    <span className="text-[10px] font-mono font-semibold text-slate-500 dark:text-slate-400">
+                                      Code: #{ord.delivery_code}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               );
             })()
           )}
+        </div>
+      )}
+
+      {/* Delivery Verification Number Pop-up Modal */}
+      {deliveryModalOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950/70 dark:text-emerald-400">
+                  <Check className="h-5 w-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Mark Order as Delivered
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    Order #{deliveryModalOrder.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeliveryModalOrder(null);
+                  setDeliveryCode('');
+                }}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="my-4 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Customer:</span>
+                <span className="font-bold text-slate-900 dark:text-white">
+                  {deliveryModalOrder.customer_name || deliveryModalOrder.user_name || 'Aurra Customer'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Email:</span>
+                <span className="font-mono text-slate-800 dark:text-slate-200">
+                  {deliveryModalOrder.customer_email || deliveryModalOrder.user_email || '—'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Contact:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  +91 {deliveryModalOrder.contact_no || 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Order Value:</span>
+                <span className="font-black text-slate-900 dark:text-white">₹{deliveryModalOrder.total}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirmDeliveryFromModal} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                  Enter Delivery / Verification Number:
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={deliveryCode}
+                  onChange={(e) => setDeliveryCode(e.target.value)}
+                  placeholder="e.g. 583920 or delivery OTP"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  This code will be saved in the database under the delivery_code column, updating the updated_time column to the current timestamp.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliveryModalOrder(null);
+                    setDeliveryCode('');
+                  }}
+                  disabled={submittingDelivery}
+                  className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingDelivery || !deliveryCode.trim()}
+                  className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-2.5 text-xs font-bold text-white shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {submittingDelivery ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4 stroke-[2.5]" />
+                      <span>Confirm &amp; Deliver</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

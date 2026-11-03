@@ -1052,14 +1052,34 @@ export const api = {
     paymentId?: string;
     items: { productId: string; qty: number; price?: number; name?: string }[];
     amount: number;
+    userId?: string;
+    userEmail?: string;
+    userName?: string;
+    contactNo?: string;
+    deliveryAddress?: string;
   }) {
+    let cachedUser: any = null;
+    try {
+      const uStr = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
+      if (uStr) cachedUser = JSON.parse(uStr);
+    } catch {}
+
+    const finalPayload = {
+      ...payload,
+      userId: payload.userId || cachedUser?.id,
+      userEmail: payload.userEmail || cachedUser?.email,
+      userName: payload.userName || cachedUser?.name,
+      contactNo: payload.contactNo || cachedUser?.contact_no,
+      deliveryAddress: payload.deliveryAddress || cachedUser?.delivery_address,
+    };
+
     return request<{
       success: boolean;
       order: Order;
       orderId: string;
     }>('/api/orders/confirm-payment', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(finalPayload),
     });
   },
 
@@ -1141,12 +1161,13 @@ export const api = {
     return { orders: ordersList };
   },
 
-  async updateOrderStatus(orderId: string, status: string) {
-    let result: { success: boolean; status: string } | null = null;
+  async updateOrderStatus(orderId: string, status: string, deliveryCode?: string) {
+    let result: { success: boolean; status: string; delivery_code?: string; updated_time?: string } | null = null;
+    const finalCode = (deliveryCode || '').toString().trim();
     try {
-      result = await request<{ success: boolean; status: string }>(`/api/orders/${orderId}/status`, {
+      result = await request<{ success: boolean; status: string; delivery_code?: string; updated_time?: string }>(`/api/orders/${orderId}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, delivery_code: finalCode || undefined }),
       });
     } catch (err) {
       console.warn('API updateOrderStatus note:', err);
@@ -1155,10 +1176,15 @@ export const api = {
     // Direct Supabase status update guarantee
     try {
       const { supabase } = await import('./supabase.js');
+      const now = new Date().toISOString();
+      const sbUpdate: any = { status, updated_time: now };
+      if (finalCode) {
+        sbUpdate.delivery_code = finalCode;
+      }
       if (!isNaN(Number(orderId))) {
-        await supabase.from('orders').update({ status }).eq('id', Number(orderId));
+        await supabase.from('orders').update(sbUpdate).eq('id', Number(orderId));
       } else {
-        await supabase.from('orders').update({ status }).eq('id', orderId);
+        await supabase.from('orders').update(sbUpdate).eq('id', orderId);
       }
     } catch (sbErr) {
       console.warn('Direct Supabase updateOrderStatus note:', sbErr);
