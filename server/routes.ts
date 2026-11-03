@@ -2296,12 +2296,28 @@ router.all(['/orders/:id/status', '/admin/orders/:id/status'], optionalAuth, asy
       console.warn('SQLite order status update warning:', e);
     }
 
-    // 2. Update in Supabase orders table
+    // 2. Update in Supabase orders table (Service Role Client)
+    let sbUpdated = false;
     try {
       if (!isNaN(Number(orderId))) {
-        await supabase.from('orders').update(updateFields).eq('id', Number(orderId));
+        const { data, error } = await supabase.from('orders').update(updateFields).eq('id', Number(orderId)).select();
+        if (data && data.length > 0) sbUpdated = true;
+        if (error) console.error('Supabase update order status error:', error);
       } else {
-        await supabase.from('orders').update(updateFields).eq('id', orderId);
+        const { data, error } = await supabase.from('orders').update(updateFields).eq('id', orderId).select();
+        if (data && data.length > 0) sbUpdated = true;
+        if (error) console.error('Supabase update order status error:', error);
+      }
+
+      // Fallback matching if orderId was local string
+      if (!sbUpdated && isNaN(Number(orderId))) {
+        try {
+          const sqlOrder = db.prepare('SELECT user_id, created_at FROM orders WHERE id = ?').get(orderId) as any;
+          if (sqlOrder?.user_id && !isNaN(Number(sqlOrder.user_id))) {
+            const { data } = await supabase.from('orders').update(updateFields).eq('user_id', Number(sqlOrder.user_id)).select();
+            if (data && data.length > 0) sbUpdated = true;
+          }
+        } catch {}
       }
     } catch (sbErr) {
       console.warn('Supabase order status update note:', sbErr);

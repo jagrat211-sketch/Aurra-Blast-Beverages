@@ -154,12 +154,11 @@ export const OrdersPage: React.FC = () => {
     openCart();
   };
 
-  // Amazon-Style Filter Rules:
-  // c. Pending Orders Tab: Should only display orders that have a "confirmed" status.
-  // d. Completed Orders Tab: Should only display orders that have been marked with a "Delivered" status.
-  const pendingOrders = orders.filter(
-    (o) => (o.status || '').toLowerCase().trim() === 'confirmed'
-  );
+  // Pending Orders: Displays orders that are confirmed and not yet fully delivered
+  const pendingOrders = orders.filter((o) => {
+    const st = (o.status || '').toLowerCase().trim();
+    return st === 'confirmed' || st === 'out_for_delivery' || st === 'preparing' || (st !== 'delivered' && st !== 'cancelled');
+  });
   const completedOrders = orders.filter(
     (o) => (o.status || '').toLowerCase().trim() === 'delivered'
   );
@@ -343,11 +342,18 @@ export const OrdersPage: React.FC = () => {
                           {dateString}
                         </span>
 
-                        {/* Status Badge: Confirmed */}
-                        <span className="rounded-full bg-amber-500/15 px-3 py-0.5 text-[11px] font-black text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border border-amber-400/30 flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
-                          <span>Confirmed · Pending Delivery</span>
-                        </span>
+                        {/* Status Badge: Confirmed or Out for Delivery */}
+                        {ord.status === 'out_for_delivery' ? (
+                          <span className="rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-black text-sky-700 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-300/60 flex items-center gap-1.5 shadow-xs">
+                            <Truck className="h-3.5 w-3.5 text-sky-600 animate-pulse" />
+                            <span>Out for Delivery</span>
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-amber-500/15 px-3 py-0.5 text-[11px] font-black text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border border-amber-400/30 flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
+                            <span>Confirmed · Pending Delivery</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Right Side: Total Price & Accordion Toggle */}
@@ -399,9 +405,16 @@ export const OrdersPage: React.FC = () => {
                               </p>
                             </div>
                           </div>
-                          <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-extrabold text-amber-700 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200/60 self-start sm:self-auto">
-                            Arriving in 45–60 mins
-                          </span>
+                          {ord.status === 'out_for_delivery' ? (
+                            <span className="rounded-lg bg-sky-50 px-2.5 py-1 text-[11px] font-extrabold text-sky-700 dark:bg-sky-950/60 dark:text-sky-400 border border-sky-200/60 self-start sm:self-auto flex items-center gap-1.5">
+                              <Truck className="h-3.5 w-3.5 text-sky-600 animate-pulse" />
+                              <span>Out for Delivery · Live in Transit</span>
+                            </span>
+                          ) : (
+                            <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-extrabold text-amber-700 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200/60 self-start sm:self-auto">
+                              Arriving in 45–60 mins
+                            </span>
+                          )}
                         </div>
 
                         {/* Breakdown of items in this single order */}

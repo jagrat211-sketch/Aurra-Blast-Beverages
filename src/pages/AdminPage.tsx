@@ -97,10 +97,10 @@ export const AdminPage: React.FC = () => {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [userRoleFilter, setUserRoleFilter] = useState<'user' | 'admin' | 'all'>('user');
 
-  // Orders Management (6th Tab)
+  // Orders Management
   const [adminOrders, setAdminOrders] = useState<any[]>([]);
   const [loadingAdminOrders, setLoadingAdminOrders] = useState(false);
-  const [adminOrderFilter, setAdminOrderFilter] = useState<'confirmed' | 'out_for_delivery' | 'delivered' | 'all'>('confirmed');
+  const [adminOrderFilter, setAdminOrderFilter] = useState<'pending' | 'confirmed' | 'out_for_delivery' | 'delivered' | 'all'>('pending');
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
 
   // Sorting state for Orders table across all columns including Email
@@ -583,12 +583,8 @@ export const AdminPage: React.FC = () => {
         >
           <Sliders className="h-4 w-4" />
           <span>Feature Settings</span>
-          <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.2 text-[9px] font-black text-emerald-700 dark:text-emerald-300">
-            5th Tab
-          </span>
         </button>
 
-        {/* 6th Tab: Customer Orders */}
         <button
           onClick={() => {
             setActiveTab('orders');
@@ -603,9 +599,6 @@ export const AdminPage: React.FC = () => {
         >
           <Package className="h-4 w-4" />
           <span>Customer Orders</span>
-          <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.2 text-[9px] font-black text-amber-700 dark:text-amber-300">
-            6th Tab
-          </span>
         </button>
       </div>
 
@@ -1427,9 +1420,6 @@ export const AdminPage: React.FC = () => {
                 <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-black text-amber-600 dark:text-amber-400">
                   Customer Orders
                 </span>
-                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                  6th Tab
-                </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Customer orders listing with column sorting, delivery verification pop-up, and status tracking.
@@ -1451,23 +1441,23 @@ export const AdminPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Filter Bar (Confirmed Orders is the default listing) */}
+          {/* Filter Bar (Pending Orders is the default listing) */}
           <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 w-fit">
             <button
               type="button"
-              onClick={() => setAdminOrderFilter('confirmed')}
+              onClick={() => setAdminOrderFilter('pending')}
               className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                adminOrderFilter === 'confirmed'
+                adminOrderFilter === 'pending'
                   ? 'bg-amber-500 text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
               }`}
             >
               <Clock className="h-3.5 w-3.5" />
-              <span>Confirmed Orders</span>
+              <span>Pending Orders</span>
               <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-black ${
-                adminOrderFilter === 'confirmed' ? 'bg-white/20 text-white' : 'bg-amber-200/60 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+                adminOrderFilter === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-200/60 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
               }`}>
-                {adminOrders.filter((o) => o.status === 'confirmed').length}
+                {adminOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled').length}
               </span>
             </button>
 
@@ -1529,8 +1519,11 @@ export const AdminPage: React.FC = () => {
             </div>
           ) : (
             (() => {
-              // 1. Filter orders according to selected tab (Confirmed by default)
+              // 1. Filter orders according to selected tab (Pending by default)
               const filteredList = adminOrders.filter((o) => {
+                if (adminOrderFilter === 'pending') {
+                  return o.status === 'confirmed' || o.status === 'out_for_delivery' || (o.status !== 'delivered' && o.status !== 'cancelled');
+                }
                 if (adminOrderFilter === 'confirmed') {
                   return o.status === 'confirmed';
                 }
@@ -1548,7 +1541,9 @@ export const AdminPage: React.FC = () => {
                   <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
                     <Package className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
                     <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                      {adminOrderFilter === 'confirmed'
+                      {adminOrderFilter === 'pending'
+                        ? 'No pending orders waiting for delivery'
+                        : adminOrderFilter === 'confirmed'
                         ? 'No confirmed orders awaiting delivery dispatch'
                         : adminOrderFilter === 'out_for_delivery'
                         ? 'No orders currently out for delivery'
@@ -1557,8 +1552,8 @@ export const AdminPage: React.FC = () => {
                         : 'No orders recorded yet'}
                     </h3>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {adminOrderFilter === 'confirmed'
-                        ? 'New customer orders placed through the checkout will appear here automatically with confirmed status.'
+                      {adminOrderFilter === 'pending' || adminOrderFilter === 'confirmed'
+                        ? 'New customer orders placed through the checkout will appear here automatically.'
                         : adminOrderFilter === 'out_for_delivery'
                         ? 'Orders marked Out for Delivery will appear here until admin verifies the delivery number.'
                         : 'Fulfilled orders will appear here once marked as delivered.'}

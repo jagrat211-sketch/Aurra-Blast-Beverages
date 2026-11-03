@@ -69,6 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   const freshAddress = data.delivery_address || parsed.delivery_address;
                   const refreshed: User = {
                     ...parsed,
+                    id: data.id ? String(data.id) : parsed.id,
                     contact_no: freshContact,
                     delivery_address: freshAddress,
                     user_profile: data.user_profile || parsed.user_profile,

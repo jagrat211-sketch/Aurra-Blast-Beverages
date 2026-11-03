@@ -1193,40 +1193,20 @@ export const api = {
   },
 
   async updateOrderStatus(orderId: string, status: string, deliveryCode?: string) {
-    let result: { success: boolean; status: string; delivery_code?: string; updated_time?: string } | null = null;
     const finalCode = (deliveryCode || '').toString().trim();
-    try {
-      result = await request<{ success: boolean; status: string; delivery_code?: string; updated_time?: string }>(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status, delivery_code: finalCode || undefined }),
-      });
-    } catch (err) {
-      console.warn('API updateOrderStatus note:', err);
-    }
+    // Persist status directly into database via server-side service role client
+    const result = await request<{
+      success: boolean;
+      status: string;
+      orderId: string;
+      delivery_code?: string;
+      updated_time?: string;
+    }>(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, delivery_code: finalCode || undefined }),
+    });
 
-    // Direct Supabase status update guarantee (Strictly Admin only)
-    try {
-      const cached = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
-      const cachedUser = cached ? JSON.parse(cached) : null;
-      const isAdmin = cachedUser?.role === 'admin' || cachedUser?.email?.toLowerCase().includes('admin');
-      if (isAdmin) {
-        const { supabase } = await import('./supabase.js');
-        const now = new Date().toISOString();
-        const sbUpdate: any = { status, updated_time: now };
-        if (finalCode) {
-          sbUpdate.delivery_code = finalCode;
-        }
-        if (!isNaN(Number(orderId))) {
-          await supabase.from('orders').update(sbUpdate).eq('id', Number(orderId));
-        } else {
-          await supabase.from('orders').update(sbUpdate).eq('id', orderId);
-        }
-      }
-    } catch (sbErr) {
-      console.warn('Direct Supabase updateOrderStatus note:', sbErr);
-    }
-
-    return result || { success: true, status };
+    return result;
   },
 
   async getAdminOrders(): Promise<{ orders: any[] }> {
