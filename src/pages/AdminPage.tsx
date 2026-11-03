@@ -588,7 +588,7 @@ export const AdminPage: React.FC = () => {
           </span>
         </button>
 
-        {/* 6th Tab: Orders Customer Order */}
+        {/* 6th Tab: Customer Orders */}
         <button
           onClick={() => {
             setActiveTab('orders');
@@ -602,7 +602,7 @@ export const AdminPage: React.FC = () => {
           }`}
         >
           <Package className="h-4 w-4" />
-          <span>Orders Customer Order</span>
+          <span>Customer Orders</span>
           <span className="rounded-full bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.2 text-[9px] font-black text-amber-700 dark:text-amber-300">
             6th Tab
           </span>
@@ -1417,15 +1417,15 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 6: Orders Customer order */}
+      {/* TAB 6: Customer Orders */}
       {activeTab === 'orders' && (
         <div className="mt-8 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2.5">
-                <h2 className="text-xl font-black text-slate-900 dark:text-white">Orders</h2>
+                <h2 className="text-xl font-black text-slate-900 dark:text-white">Customer Orders</h2>
                 <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-black text-amber-600 dark:text-amber-400">
-                  Customer order
+                  Customer Orders
                 </span>
                 <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-400">
                   6th Tab

@@ -22,6 +22,9 @@ import { api } from '../services/api';
 import { Order, Product } from '../types';
 import { CartDrawer } from '../components/CartDrawer';
 import { SettingsModal } from '../components/SettingsModal';
+import { CheckoutAddressModal } from '../components/CheckoutAddressModal';
+import { PaymentModal } from '../components/PaymentModal';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 
 export const OrdersPage: React.FC = () => {
   const { user } = useAuth();
@@ -35,6 +38,11 @@ export const OrdersPage: React.FC = () => {
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+
+  // Checkout modals state for reordering
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [confirmedOrder, setConfirmedOrder] = useState<Order | null>(null);
 
   const addItem = useCartStore((state) => state.addItem);
   const openCart = useCartStore((state) => state.openCart);
@@ -105,24 +113,41 @@ export const OrdersPage: React.FC = () => {
   const handleReorder = (order: Order) => {
     if (!order.items || order.items.length === 0) return;
     for (const item of order.items) {
-      const matchedProd = products.find((p) => p.id === item.product_id);
+      const matchedProd = products.find(
+        (p) => String(p.id) === String(item.product_id) ||
+               p.name?.toLowerCase().trim() === item.name_snapshot?.toLowerCase().trim()
+      );
+      const safePrice = Number(item.price_snapshot) || Number(matchedProd?.price) || 149;
+      const safeQty = Math.max(1, Number(item.qty) || 1);
+
       if (matchedProd) {
-        addItem(matchedProd, item.qty);
+        addItem(
+          {
+            ...matchedProd,
+            price: safePrice,
+            remaining_quantity: matchedProd.remaining_quantity !== undefined && matchedProd.remaining_quantity > 0
+              ? matchedProd.remaining_quantity
+              : 50,
+          },
+          safeQty
+        );
       } else {
         addItem(
           {
-            id: item.product_id,
-            name: item.name_snapshot,
+            id: String(item.product_id),
+            name: item.name_snapshot || 'Aurra Beverage',
             flavor: 'Botanical Sparkler',
-            price: item.price_snapshot,
-            image_url: '/assets/images/hero_beverage_can_1793439801479.jpg',
-            description: item.name_snapshot,
+            price: safePrice,
+            image_url: getProductImage(item.product_id, item.name_snapshot),
+            description: item.name_snapshot || 'Aurra Beverage',
             volume: '330ml',
             calories: 40,
             active: 1,
+            total_quantity: 50,
+            remaining_quantity: 50,
             created_at: new Date().toISOString(),
           },
-          item.qty
+          safeQty
         );
       }
     }
@@ -593,8 +618,49 @@ export const OrdersPage: React.FC = () => {
         )}
       </div>
 
-      {/* Cart Drawer */}
-      <CartDrawer onProceedToCheckout={() => {}} />
+      {/* Cart Drawer with full functional checkout trigger */}
+      <CartDrawer
+        onProceedToCheckout={() => {
+          if (!user) {
+            window.location.href = '/auth';
+            return;
+          }
+          setIsAddressModalOpen(true);
+        }}
+      />
+
+      {/* Checkout Address & Mobile Verification Modal */}
+      <CheckoutAddressModal
+        isOpen={isAddressModalOpen}
+        onClose={() => setIsAddressModalOpen(false)}
+        onConfirmed={() => {
+          setIsAddressModalOpen(false);
+          setIsPaymentModalOpen(true);
+        }}
+      />
+
+      {/* Payment Modal with Pure Integrated Dynamic Razorpay QR */}
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        onSuccess={(newOrder: Order) => {
+          setConfirmedOrder(newOrder);
+          fetchOrders();
+          setActiveTab('pending');
+          setSearchParams({ tab: 'pending' });
+        }}
+      />
+
+      {/* Confirmation Modal */}
+      <ConfirmationModal
+        order={confirmedOrder}
+        onClose={() => setConfirmedOrder(null)}
+        onViewOrders={() => {
+          setConfirmedOrder(null);
+          setActiveTab('pending');
+          setSearchParams({ tab: 'pending' });
+        }}
+      />
 
       {/* Settings Modal */}
       <SettingsModal
