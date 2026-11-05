@@ -59,13 +59,14 @@ const createOrderSchema = z.object({
 
 const productSchema = z.object({
   id: z.string().optional(),
+  originalName: z.string().optional(),
   name: z.string().trim().min(2),
   beverage_name: z.string().trim().optional(),
   flavor: z.string().trim().min(2),
   flavor_notes: z.string().trim().optional(),
   price: z.number().positive('Price must be greater than 0'),
   image_url: z.string().min(1, 'Image is required'),
-  description: z.string().trim().min(5),
+  description: z.string().trim().default(''),
   volume: z.string().trim().default('330ml'),
   calories: z.number().int().nonnegative().default(40),
   category: z.string().trim().default('Botanical Sparkler'),
@@ -283,21 +284,57 @@ router.post('/auth/login', async (req: Request, res: Response) => {
       (password.toLowerCase() === 'admin');
 
     if (isDefaultAdmin) {
+      let sbAdmin: any = null;
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .ilike('email', 'adminaurra@beverages.com')
+          .maybeSingle();
+        sbAdmin = data;
+      } catch {}
+
+      let localAdmin: any = null;
+      try {
+        localAdmin = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE lower(email) = ? OR id = ?').get('adminaurra@beverages.com', 'admin_sys_01');
+      } catch {}
+
+      const rawDefaultContact = sbAdmin?.['contact_no.'] ?? sbAdmin?.contact_no ?? localAdmin?.contact_no;
+      const finalProfile = sbAdmin?.user_profile || sbAdmin?.avatar_url || localAdmin?.user_profile || localAdmin?.avatar_url || undefined;
+      const finalAddress = sbAdmin?.delivery_address ?? localAdmin?.delivery_address ?? undefined;
+      const finalContact = rawDefaultContact != null ? String(rawDefaultContact) : undefined;
+      const finalName = sbAdmin?.name || localAdmin?.name || 'Aurra Administrator';
+
       const authUser = {
-        id: 'admin_sys_01',
-        name: 'Aurra Administrator',
+        id: sbAdmin?.id ? String(sbAdmin.id) : (localAdmin?.id || 'admin_sys_01'),
+        name: finalName,
         email: 'adminaurra@beverages.com',
         role: 'admin' as const,
         email_verified: 1,
-        created_at: new Date().toISOString(),
-        avatar_url: undefined,
+        created_at: sbAdmin?.created_at || localAdmin?.created_at || new Date().toISOString(),
+        updated_at: sbAdmin?.updated_at || localAdmin?.updated_at || undefined,
+        delivery_address: finalAddress,
+        contact_no: finalContact,
+        avatar_url: finalProfile,
+        user_profile: finalProfile,
         parent_id: 'AURRA-HQ-01',
       };
       try {
         db.prepare(`
-          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, parent_id)
-          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, 'AURRA-HQ-01')
-        `).run(authUser.id, authUser.email, await hashPassword('admin'), authUser.created_at);
+          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, user_profile, parent_id)
+          VALUES (?, ?, ?, ?, 'admin', 1, ?, ?, ?, ?, ?, ?, 'AURRA-HQ-01')
+        `).run(
+          authUser.id,
+          authUser.name,
+          authUser.email,
+          await hashPassword('admin'),
+          authUser.created_at,
+          authUser.updated_at || null,
+          authUser.delivery_address || null,
+          authUser.contact_no || null,
+          finalProfile || null,
+          finalProfile || null
+        );
       } catch {
         // ignore
       }
@@ -308,7 +345,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
 
     // 2. Verify user credentials against Supabase users table
     try {
-      const { data: sbUser, error: sbError } = await supabase
+      const { data: sbUser } = await supabase
         .from('users')
         .select('*')
         .ilike('email', cleanEmail)
@@ -329,10 +366,17 @@ router.post('/auth/login', async (req: Request, res: Response) => {
             }
           }
 
+          let localUserRow: any = null;
+          try {
+            localUserRow = db.prepare('SELECT delivery_address, contact_no, avatar_url, user_profile FROM users WHERE lower(email) = lower(?) OR id = ?').get(cleanEmail, String(sbUser.id));
+          } catch {}
+
           // Check role from Supabase column ('admin' or 'user')
           const assignedRole = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
-          const savedAddress = sbUser.delivery_address || sbUser.deliveryAddress || sbUser.address || null;
-          const savedContact = sbUser['contact_no.'] || sbUser.contact_no || null;
+          const savedAddress = sbUser.delivery_address ?? sbUser.deliveryAddress ?? sbUser.address ?? localUserRow?.delivery_address ?? undefined;
+          const rawSavedContact = sbUser['contact_no.'] ?? sbUser.contact_no ?? localUserRow?.contact_no;
+          const savedContact = rawSavedContact != null ? String(rawSavedContact) : undefined;
+          const savedProfile = sbUser.user_profile || sbUser.avatar_url || localUserRow?.user_profile || localUserRow?.avatar_url || undefined;
 
           const authUser = {
             id: String(sbUser.id),
@@ -341,18 +385,19 @@ router.post('/auth/login', async (req: Request, res: Response) => {
             role: assignedRole,
             email_verified: 1,
             created_at: sbUser.created_at || new Date().toISOString(),
-            updated_at: sbUser.updated_at || null,
+            updated_at: sbUser.updated_at || undefined,
             delivery_address: savedAddress,
             contact_no: savedContact,
-            avatar_url: sbUser.avatar_url || sbUser.user_profile || null,
+            avatar_url: savedProfile,
+            user_profile: savedProfile,
             parent_id: sbUser.parent_id || 'AURRA-DIST-IND-01',
           };
 
           // Synchronize with local SQLite if available
           try {
             db.prepare(`
-              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, parent_id)
-              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+              INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, user_profile, parent_id)
+              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               authUser.id,
               authUser.name,
@@ -360,10 +405,11 @@ router.post('/auth/login', async (req: Request, res: Response) => {
               storedPasswordHash,
               assignedRole,
               authUser.created_at,
-              authUser.updated_at,
-              authUser.delivery_address,
-              authUser.contact_no,
-              authUser.avatar_url,
+              authUser.updated_at || null,
+              authUser.delivery_address || null,
+              authUser.contact_no || null,
+              savedProfile || null,
+              savedProfile || null,
               authUser.parent_id
             );
           } catch (syncErr) {
@@ -423,35 +469,37 @@ router.post('/auth/logout', (_req: Request, res: Response) => {
 router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
   let user: any = null;
   try {
-    user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+    user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
   } catch {
     user = null;
   }
 
-  // Also query latest user_profile, delivery_address, and contact_no from Supabase
+  // Also query latest user_profile, delivery_address, name, and contact_no from Supabase
   let sbUser: any = null;
   try {
     const { data } = await supabase
       .from('users')
       .select('*')
-      .eq('email', req.user!.email)
+      .ilike('email', req.user!.email.trim())
       .maybeSingle();
     sbUser = data;
   } catch {}
 
+  const rawContact = sbUser?.['contact_no.'] ?? sbUser?.contact_no ?? user?.contact_no ?? (req.user as any)!.contact_no;
   const finalProfile = sbUser?.user_profile || sbUser?.avatar_url || user?.user_profile || user?.avatar_url || req.user!.avatar_url || null;
   const finalAddress = sbUser?.delivery_address || user?.delivery_address || req.user!.delivery_address || null;
-  const finalContact = sbUser?.['contact_no.'] || sbUser?.contact_no || user?.contact_no || (req.user as any)!.contact_no || null;
+  const finalContact = rawContact != null ? String(rawContact) : null;
+  const finalName = sbUser?.name || user?.name || req.user!.name;
 
   return res.json({
     user: {
       id: user?.id || (sbUser ? String(sbUser.id) : req.user!.id),
-      name: sbUser?.name || user?.name || req.user!.name,
-      email: user?.email || req.user!.email,
-      role: user?.role || req.user!.role,
+      name: finalName,
+      email: sbUser?.email || user?.email || req.user!.email,
+      role: sbUser?.role || user?.role || req.user!.role,
       email_verified: 1,
-      created_at: user?.created_at || req.user!.created_at,
-      updated_at: user?.updated_at || null,
+      created_at: sbUser?.created_at || user?.created_at || req.user!.created_at,
+      updated_at: sbUser?.updated_at || user?.updated_at || null,
       avatar_url: finalProfile,
       user_profile: finalProfile,
       delivery_address: finalAddress,
@@ -478,40 +526,58 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
       cleanPass.toLowerCase() === 'admin';
 
     if (isDefaultAdmin) {
-      let existingProfile: string | undefined = undefined;
+      let sbAdmin: any = null;
       try {
-        const { data: sbAdmin } = await supabase.from('users').select('user_profile, avatar_url').eq('email', 'adminaurra@beverages.com').maybeSingle();
-        if (sbAdmin?.user_profile || sbAdmin?.avatar_url) {
-          existingProfile = sbAdmin.user_profile || sbAdmin.avatar_url;
-        }
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .ilike('email', 'adminaurra@beverages.com')
+          .maybeSingle();
+        sbAdmin = data;
       } catch {}
 
-      if (!existingProfile) {
-        try {
-          const localAdmin = db.prepare('SELECT avatar_url, user_profile FROM users WHERE email = ?').get('adminaurra@beverages.com') as any;
-          if (localAdmin?.user_profile || localAdmin?.avatar_url) {
-            existingProfile = localAdmin.user_profile || localAdmin.avatar_url;
-          }
-        } catch {}
-      }
+      let localAdmin: any = null;
+      try {
+        localAdmin = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE lower(email) = ? OR id = ?').get('adminaurra@beverages.com', 'admin_sys_01');
+      } catch {}
+
+      const rawAdminContact = sbAdmin?.['contact_no.'] ?? sbAdmin?.contact_no ?? localAdmin?.contact_no;
+      const finalProfile = sbAdmin?.user_profile || sbAdmin?.avatar_url || localAdmin?.user_profile || localAdmin?.avatar_url || undefined;
+      const finalAddress = sbAdmin?.delivery_address ?? localAdmin?.delivery_address ?? undefined;
+      const finalContact = rawAdminContact != null ? String(rawAdminContact) : undefined;
+      const finalName = sbAdmin?.name || localAdmin?.name || 'Aurra Administrator';
 
       const authUser = {
-        id: 'admin_sys_01',
-        name: 'Aurra Administrator',
+        id: sbAdmin?.id ? String(sbAdmin.id) : (localAdmin?.id || 'admin_sys_01'),
+        name: finalName,
         email: 'adminaurra@beverages.com',
         role: 'admin' as const,
         email_verified: 1,
-        created_at: new Date().toISOString(),
-        avatar_url: existingProfile,
-        user_profile: existingProfile,
+        created_at: sbAdmin?.created_at || localAdmin?.created_at || new Date().toISOString(),
+        updated_at: sbAdmin?.updated_at || localAdmin?.updated_at || undefined,
+        delivery_address: finalAddress,
+        contact_no: finalContact,
+        avatar_url: finalProfile,
+        user_profile: finalProfile,
         parent_id: 'AURRA-HQ-01',
       };
 
       try {
         db.prepare(`
-          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, avatar_url, user_profile, parent_id)
-          VALUES (?, 'Aurra Administrator', ?, ?, 'admin', 1, ?, ?, ?, 'AURRA-HQ-01')
-        `).run(authUser.id, authUser.email, await hashPassword('admin'), authUser.created_at, existingProfile || null, existingProfile || null);
+          INSERT OR REPLACE INTO users (id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, user_profile, parent_id)
+          VALUES (?, ?, ?, ?, 'admin', 1, ?, ?, ?, ?, ?, ?, 'AURRA-HQ-01')
+        `).run(
+          authUser.id,
+          authUser.name,
+          authUser.email,
+          await hashPassword('admin'),
+          authUser.created_at,
+          authUser.updated_at || null,
+          authUser.delivery_address || null,
+          authUser.contact_no || null,
+          finalProfile || null,
+          finalProfile || null
+        );
       } catch (err) {
         console.warn('Admin SQLite insert warning:', err);
       }
@@ -526,16 +592,22 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
       const { data: sbUser } = await supabase
         .from('users')
         .select('*')
-        .eq('email', cleanUser)
+        .ilike('email', cleanUser)
         .maybeSingle();
 
-      if (sbUser && sbUser.password) {
-        const isMatch = await comparePassword(cleanPass, sbUser.password);
+      const sbStoredPwd = sbUser?.password || sbUser?.password_hash;
+      if (sbUser && sbStoredPwd) {
+        const isMatch = await comparePassword(cleanPass, sbStoredPwd);
         if (isMatch) {
           // Explicit admin role check
           if (sbUser.role !== 'admin' && cleanUser !== 'adminaurra@beverages.com') {
             return res.status(403).json({ error: 'Access denied: Regular users with role "user" cannot access the admin panel.' });
           }
+
+          const savedAddress = sbUser.delivery_address || sbUser.deliveryAddress || sbUser.address || undefined;
+          const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no;
+          const savedContact = rawContact != null ? String(rawContact) : undefined;
+          const savedProfile = sbUser.user_profile || sbUser.avatar_url || undefined;
 
           const authUser = {
             id: String(sbUser.id),
@@ -544,11 +616,17 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
             role: 'admin' as const,
             email_verified: 1,
             created_at: sbUser.created_at || new Date().toISOString(),
+            updated_at: sbUser.updated_at || undefined,
+            delivery_address: savedAddress,
+            contact_no: savedContact,
+            avatar_url: savedProfile,
+            user_profile: savedProfile,
+            parent_id: sbUser.parent_id || 'AURRA-HQ-01',
           };
 
           const token = signToken(authUser);
           setAuthCookie(res, token);
-          return res.json({ success: true, user: authUser });
+          return res.json({ success: true, token, user: authUser });
         }
       }
     } catch (sbErr) {
@@ -556,7 +634,7 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
     }
 
     // 3. Fallback: local DB admin check
-    const dbAdmin = db.prepare("SELECT id, name, email, password_hash, role, email_verified, created_at, avatar_url, parent_id FROM users WHERE (email = ? OR id = ?) AND role = 'admin'").get(cleanUser, cleanUser) as any;
+    const dbAdmin = db.prepare("SELECT id, name, email, password_hash, role, email_verified, created_at, updated_at, delivery_address, contact_no, avatar_url, user_profile, parent_id FROM users WHERE (lower(email) = ? OR id = ?) AND role = 'admin'").get(cleanUser, cleanUser) as any;
     if (dbAdmin && (await comparePassword(cleanPass, dbAdmin.password_hash))) {
       const authUser = {
         id: dbAdmin.id,
@@ -565,12 +643,16 @@ router.post('/auth/admin-login', async (req: Request, res: Response) => {
         role: 'admin' as const,
         email_verified: 1,
         created_at: dbAdmin.created_at,
-        avatar_url: dbAdmin.avatar_url || null,
+        updated_at: dbAdmin.updated_at || null,
+        delivery_address: dbAdmin.delivery_address || null,
+        contact_no: dbAdmin.contact_no || null,
+        avatar_url: dbAdmin.user_profile || dbAdmin.avatar_url || null,
+        user_profile: dbAdmin.user_profile || dbAdmin.avatar_url || null,
         parent_id: dbAdmin.parent_id || 'AURRA-HQ-01',
       };
       const token = signToken(authUser);
       setAuthCookie(res, token);
-      return res.json({ success: true, user: authUser });
+      return res.json({ success: true, token, user: authUser });
     }
 
     return res.status(401).json({ error: 'Invalid admin credentials. (Default: adminaurra@beverages.com / admin)' });
@@ -697,39 +779,46 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
     // 1. Photo removal requested (clears user_profile in Supabase and SQLite)
     if (remove || avatarUrl === null || avatarUrl === '') {
       try {
-        db.prepare('UPDATE users SET avatar_url = NULL, user_profile = NULL, updated_at = ? WHERE id = ? OR email = ?')
+        db.prepare('UPDATE users SET avatar_url = NULL, user_profile = NULL, updated_at = ? WHERE id = ? OR lower(email) = lower(?)')
           .run(now, req.user!.id, req.user!.email);
       } catch {}
 
+      let sbUser: any = null;
       try {
-        await supabase
+        const { data } = await supabase
           .from('users')
           .update({
             user_profile: null,
             updated_at: now,
           })
-          .ilike('email', req.user!.email.toLowerCase().trim());
+          .ilike('email', req.user!.email.toLowerCase().trim())
+          .select('*')
+          .maybeSingle();
+        sbUser = data;
       } catch (sbErr) {
         console.warn('Supabase profile removal notice:', sbErr);
       }
 
       let updatedUser: any = null;
       try {
-        updatedUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+        updatedUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
       } catch {}
 
-      if (!updatedUser) {
-        updatedUser = {
-          ...req.user,
-          avatar_url: null,
-          user_profile: null,
-        };
-      }
+      const rawContact = sbUser?.['contact_no.'] ?? sbUser?.contact_no ?? updatedUser?.contact_no ?? (req.user as any)?.contact_no;
+      const mergedUser = {
+        ...req.user,
+        ...(updatedUser || {}),
+        name: sbUser?.name || updatedUser?.name || req.user!.name,
+        delivery_address: sbUser?.delivery_address || updatedUser?.delivery_address || req.user?.delivery_address || null,
+        contact_no: rawContact != null ? String(rawContact) : null,
+        avatar_url: null,
+        user_profile: null,
+      };
 
       return res.json({
         success: true,
         url: null,
-        user: updatedUser,
+        user: mergedUser,
       });
     }
 
@@ -755,28 +844,33 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
 
     // 1. Update SQLite local database
     try {
-      db.prepare('UPDATE users SET avatar_url = ?, user_profile = ?, updated_at = ? WHERE id = ? OR email = ?')
+      db.prepare('UPDATE users SET avatar_url = ?, user_profile = ?, updated_at = ? WHERE id = ? OR lower(email) = lower(?)')
         .run(finalProfileUrl, finalProfileUrl, now, req.user!.id, req.user!.email);
     } catch {
       try {
-        db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ? OR email = ?')
+        db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ? OR lower(email) = lower(?)')
           .run(finalProfileUrl, now, req.user!.id, req.user!.email);
       } catch {}
     }
 
     // 2. Update Supabase users table: user_profile column as requested
+    let sbUser: any = null;
     try {
       const cleanEmail = req.user!.email?.toLowerCase().trim();
-      const { error: sbErr } = await supabase
+      const { data, error: sbErr } = await supabase
         .from('users')
         .update({
           user_profile: finalProfileUrl,
           updated_at: now,
         })
-        .ilike('email', cleanEmail);
+        .ilike('email', cleanEmail)
+        .select('*')
+        .maybeSingle();
 
       if (sbErr) {
         console.warn('Supabase user_profile update warning:', sbErr);
+      } else {
+        sbUser = data;
       }
     } catch (sbErr) {
       console.warn('Supabase avatar update error:', sbErr);
@@ -784,23 +878,26 @@ router.post('/auth/avatar', requireAuth, async (req: Request, res: Response) => 
 
     let updated: any;
     try {
-      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
     } catch {
       updated = null;
     }
 
-    if (!updated) {
-      updated = {
-        ...req.user,
-        avatar_url: finalProfileUrl,
-        user_profile: finalProfileUrl,
-      };
-    }
+    const rawContact = sbUser?.['contact_no.'] ?? sbUser?.contact_no ?? updated?.contact_no ?? (req.user as any)?.contact_no;
+    const mergedUser = {
+      ...req.user,
+      ...(updated || {}),
+      name: sbUser?.name || updated?.name || req.user!.name,
+      delivery_address: sbUser?.delivery_address || updated?.delivery_address || req.user?.delivery_address || null,
+      contact_no: rawContact != null ? String(rawContact) : null,
+      avatar_url: finalProfileUrl,
+      user_profile: finalProfileUrl,
+    };
 
     return res.json({
       success: true,
       url: finalProfileUrl,
-      user: updated,
+      user: mergedUser,
     });
   } catch (err) {
     console.error('Avatar update error:', err);
@@ -950,46 +1047,79 @@ router.get('/products', async (_req: Request, res: Response) => {
       }
     }
 
-    // Attempt to merge real-time inventory and new formulations from Supabase products table
+    // Attempt to merge real-time inventory, category, edits, and new formulations from Supabase products table
     try {
-      const { data: sbProds } = await supabase.from('products').select('*');
+      const { data: sbProds } = await supabase.from('products').select('*').order('id', { ascending: true });
       if (sbProds && sbProds.length > 0) {
         for (const sbP of sbProds) {
           const match = products.find(
-            (p) => p.name === sbP.beverage_name || p.id === String(sbP.id) || p.beverage_name === sbP.beverage_name
+            (p) =>
+              String(p.id) === String(sbP.id) ||
+              (sbP.beverage_name &&
+                ((p.name && p.name.toLowerCase().trim() === sbP.beverage_name.toLowerCase().trim()) ||
+                  (p.beverage_name && p.beverage_name.toLowerCase().trim() === sbP.beverage_name.toLowerCase().trim())))
           );
           if (match) {
+            match.id = String(sbP.id);
+            if (sbP.beverage_name) {
+              match.beverage_name = sbP.beverage_name;
+              match.name = sbP.beverage_name;
+            }
             if (typeof sbP.remaining_quantity === 'number') {
               match.remaining_quantity = sbP.remaining_quantity;
             }
             if (typeof sbP.total_quantity === 'number') {
               match.total_quantity = sbP.total_quantity;
             }
-            if (sbP.price) match.price = sbP.price;
-            if (sbP.image_url) match.image_url = sbP.image_url;
-            if (sbP.description) match.description = sbP.description;
+            if (sbP.price !== undefined && sbP.price !== null) {
+              match.price = Number(sbP.price);
+            }
+            if (sbP.category) {
+              match.category = sbP.category;
+            }
+            if (sbP.volume) {
+              match.volume = sbP.volume;
+            }
+            if (typeof sbP.calories === 'number') {
+              match.calories = sbP.calories;
+            }
+            if (sbP.image_url) {
+              match.image_url = sbP.image_url.startsWith('/src/assets/images/')
+                ? sbP.image_url.replace('/src/assets/images/', '/assets/images/')
+                : sbP.image_url;
+            }
+            if (sbP.description !== undefined && sbP.description !== null) {
+              match.description = sbP.description;
+            }
             if (sbP.flavor_notes) {
               match.flavor_notes = sbP.flavor_notes;
               match.flavor = sbP.flavor_notes;
             }
+            if (sbP.updated_at) {
+              match.updated_at = sbP.updated_at;
+            }
           } else {
-            // New beverage formulation added directly in Supabase or Admin
+            const cleanImg = sbP.image_url?.startsWith('/src/assets/images/')
+              ? sbP.image_url.replace('/src/assets/images/', '/assets/images/')
+              : (sbP.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg');
+            // New or renamed beverage formulation from Supabase
             products.push({
               id: String(sbP.id),
               name: sbP.beverage_name,
               beverage_name: sbP.beverage_name,
               flavor: sbP.flavor_notes || 'Botanical Sparkler',
               flavor_notes: sbP.flavor_notes || 'Botanical Sparkler',
-              price: sbP.price || 149,
-              image_url: sbP.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg',
+              price: sbP.price !== undefined && sbP.price !== null ? Number(sbP.price) : 149,
+              image_url: cleanImg,
               description: sbP.description || '',
               volume: sbP.volume || '330ml',
-              calories: sbP.calories || 40,
+              calories: typeof sbP.calories === 'number' ? sbP.calories : 40,
               category: sbP.category || 'Botanical Sparkler',
-              total_quantity: sbP.total_quantity || 50,
-              remaining_quantity: sbP.remaining_quantity || 50,
+              total_quantity: typeof sbP.total_quantity === 'number' ? sbP.total_quantity : 50,
+              remaining_quantity: typeof sbP.remaining_quantity === 'number' ? sbP.remaining_quantity : 50,
               active: 1,
               created_at: sbP.created_at || new Date().toISOString(),
+              updated_at: sbP.updated_at || undefined,
             });
           }
         }
@@ -1005,8 +1135,8 @@ router.get('/products', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/products (Admin only: create new beverage or update with stock tracking)
-router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+// Shared handler for creating or updating a product across Supabase & SQLite
+async function handleUpsertProduct(req: Request, res: Response) {
   try {
     const parse = productSchema.safeParse(req.body);
     if (!parse.success) {
@@ -1014,6 +1144,7 @@ router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Re
     }
 
     const {
+      originalName,
       name,
       beverage_name,
       flavor,
@@ -1030,37 +1161,76 @@ router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Re
     } = parse.data;
 
     const bevName = (beverage_name || name).trim();
+    const prevName = (originalName || '').trim();
     const flavNotes = (flavor_notes || flavor).trim();
     const cat = (category || 'Botanical Sparkler').trim();
     const totalQty = typeof total_quantity === 'number' ? total_quantity : 50;
     const now = new Date().toISOString();
-    const id = req.body.id || generateId('prod');
+    const requestedId = (req.params.id || req.body.id || '').toString().trim();
 
     const cleanImageUrl = image_url?.startsWith('/src/assets/images/')
       ? image_url.replace('/src/assets/images/', '/assets/images/')
       : (image_url || '/assets/images/hero_beverage_can_1793439801479.jpg');
 
-    let existing = null;
+    let existingLocal: any = null;
     try {
-      existing = db.prepare('SELECT id, created_at, remaining_quantity FROM products WHERE id = ?').get(id) as any;
+      if (requestedId) {
+        existingLocal = db.prepare('SELECT id, created_at, remaining_quantity FROM products WHERE id = ?').get(requestedId) as any;
+      }
+      if (!existingLocal && prevName) {
+        existingLocal = db
+          .prepare('SELECT id, created_at, remaining_quantity FROM products WHERE lower(name) = lower(?) OR lower(beverage_name) = lower(?)')
+          .get(prevName, prevName) as any;
+      }
+      if (!existingLocal) {
+        existingLocal = db
+          .prepare('SELECT id, created_at, remaining_quantity FROM products WHERE lower(name) = lower(?) OR lower(beverage_name) = lower(?)')
+          .get(bevName, bevName) as any;
+      }
     } catch {
-      existing = null;
+      existingLocal = null;
     }
 
     const remainQty = typeof remaining_quantity === 'number'
       ? remaining_quantity
-      : (existing && typeof existing.remaining_quantity === 'number' ? existing.remaining_quantity : totalQty);
+      : (existingLocal && typeof existingLocal.remaining_quantity === 'number' ? existingLocal.remaining_quantity : totalQty);
 
-    // 1. Sync directly to Supabase products table (matched by beverage_name)
+    let finalId = requestedId || existingLocal?.id || generateId('prod');
+    let finalCreatedAt = existingLocal?.created_at || now;
+    let finalUpdatedAt = now;
+    let isUpdate = Boolean(requestedId || existingLocal);
+
+    // 1. Sync directly to Supabase products table (match by id first, then originalName, then beverage_name)
     try {
-      const { data: existingSbProd } = await supabase
-        .from('products')
-        .select('id')
-        .ilike('beverage_name', bevName)
-        .maybeSingle();
+      let existingSbProd: any = null;
+      if (requestedId && !isNaN(Number(requestedId))) {
+        const { data } = await supabase
+          .from('products')
+          .select('*')
+          .eq('id', Number(requestedId))
+          .maybeSingle();
+        existingSbProd = data;
+      }
+      if (!existingSbProd && prevName) {
+        const { data } = await supabase
+          .from('products')
+          .select('*')
+          .ilike('beverage_name', prevName)
+          .maybeSingle();
+        existingSbProd = data;
+      }
+      if (!existingSbProd) {
+        const { data } = await supabase
+          .from('products')
+          .select('*')
+          .ilike('beverage_name', bevName)
+          .maybeSingle();
+        existingSbProd = data;
+      }
 
       if (existingSbProd?.id) {
-        await supabase
+        isUpdate = true;
+        const { data: updatedSb, error: sbUpdateErr } = await supabase
           .from('products')
           .update({
             beverage_name: bevName,
@@ -1075,9 +1245,20 @@ router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Re
             image_url: cleanImageUrl,
             updated_at: now,
           })
-          .eq('id', existingSbProd.id);
+          .eq('id', existingSbProd.id)
+          .select('*')
+          .maybeSingle();
+
+        if (sbUpdateErr) {
+          console.error('Supabase product update error:', sbUpdateErr);
+          return res.status(500).json({ error: sbUpdateErr.message || 'Failed to update product in database' });
+        }
+
+        finalId = String(existingSbProd.id);
+        finalCreatedAt = updatedSb?.created_at || existingSbProd.created_at || finalCreatedAt;
+        finalUpdatedAt = updatedSb?.updated_at || now;
       } else {
-        await supabase
+        const { data: insertedSb, error: sbInsertErr } = await supabase
           .from('products')
           .insert({
             beverage_name: bevName,
@@ -1091,33 +1272,59 @@ router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Re
             calories,
             image_url: cleanImageUrl,
             created_at: now,
-          });
+            updated_at: now,
+          })
+          .select('*')
+          .maybeSingle();
+
+        if (sbInsertErr) {
+          console.error('Supabase product insert error:', sbInsertErr);
+          return res.status(500).json({ error: sbInsertErr.message || 'Failed to save product in database' });
+        }
+
+        if (insertedSb?.id) {
+          finalId = String(insertedSb.id);
+          finalCreatedAt = insertedSb.created_at || now;
+          finalUpdatedAt = insertedSb.updated_at || now;
+        }
       }
-    } catch (sbErr) {
+    } catch (sbErr: any) {
       console.warn('Supabase product sync warning (handled gracefully):', sbErr);
     }
 
-    // 2. Sync to local SQLite if available
+    // 2. Sync to local SQLite if available (updating existing row cleanly without leaving stale renamed copies)
     try {
-      if (existing) {
+      if (existingLocal && existingLocal.id !== finalId) {
+        db.prepare('DELETE FROM products WHERE id = ?').run(existingLocal.id);
+      }
+      if (prevName && prevName.toLowerCase() !== bevName.toLowerCase()) {
+        db.prepare('DELETE FROM products WHERE (lower(name) = lower(?) OR lower(beverage_name) = lower(?)) AND id != ?').run(
+          prevName,
+          prevName,
+          finalId
+        );
+      }
+
+      const existingByFinalId = db.prepare('SELECT id FROM products WHERE id = ?').get(finalId) as any;
+      if (existingByFinalId) {
         db.prepare(`
           UPDATE products
           SET name = ?, beverage_name = ?, flavor = ?, flavor_notes = ?, price = ?, image_url = ?, description = ?,
               volume = ?, calories = ?, category = ?, total_quantity = ?, remaining_quantity = ?, active = ?, updated_at = ?
           WHERE id = ?
-        `).run(bevName, bevName, flavNotes, flavNotes, price, cleanImageUrl, description, volume, calories, cat, totalQty, remainQty, active, now, id);
+        `).run(bevName, bevName, flavNotes, flavNotes, price, cleanImageUrl, description, volume, calories, cat, totalQty, remainQty, active, finalUpdatedAt, finalId);
       } else {
         db.prepare(`
-          INSERT INTO products (id, name, beverage_name, flavor, flavor_notes, price, image_url, description, volume, calories, category, total_quantity, remaining_quantity, active, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(id, bevName, bevName, flavNotes, flavNotes, price, cleanImageUrl, description, volume, calories, cat, totalQty, remainQty, active, now);
+          INSERT INTO products (id, name, beverage_name, flavor, flavor_notes, price, image_url, description, volume, calories, category, total_quantity, remaining_quantity, active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(finalId, bevName, bevName, flavNotes, flavNotes, price, cleanImageUrl, description, volume, calories, cat, totalQty, remainQty, active, finalCreatedAt, finalUpdatedAt);
       }
     } catch (localDbErr) {
       console.warn('Local SQLite product save notice:', localDbErr);
     }
 
     const saved = {
-      id,
+      id: finalId,
       name: bevName,
       beverage_name: bevName,
       flavor: flavNotes,
@@ -1131,14 +1338,20 @@ router.post('/products', requireAuth, requireAdmin, async (req: Request, res: Re
       total_quantity: totalQty,
       remaining_quantity: remainQty,
       active,
-      created_at: now,
+      created_at: finalCreatedAt,
+      updated_at: finalUpdatedAt,
     };
-    return res.status(201).json({ success: true, product: saved });
+    return res.status(isUpdate ? 200 : 201).json({ success: true, product: saved });
   } catch (err) {
     console.error('Save product error:', err);
     return res.status(500).json({ error: 'Failed to save product' });
   }
-});
+}
+
+// POST /api/products & PUT/PATCH /api/products/:id (Admin only: create or edit beverage with full stock & updated_at sync)
+router.post('/products', requireAuth, requireAdmin, handleUpsertProduct);
+router.put('/products/:id', requireAuth, requireAdmin, handleUpsertProduct);
+router.patch('/products/:id', requireAuth, requireAdmin, handleUpsertProduct);
 
 // DELETE /api/products/:id (Delete product from SQLite and Supabase)
 router.delete('/products/:id', optionalAuth, async (req: Request, res: Response) => {
@@ -1211,27 +1424,41 @@ router.post('/products/upload-image', requireAuth, requireAdmin, async (req: Req
 
     const now = new Date().toISOString();
 
-    // If productId is provided, associate this image with the product in database
+    // If productId is provided, associate this image with the product in database (SQLite + Supabase)
     let updatedProduct: any = null;
     if (productId) {
       const existing = db.prepare('SELECT id, name, beverage_name FROM products WHERE id = ?').get(productId) as any;
       if (existing) {
         db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE id = ?').run(resultUrl, now, productId);
         updatedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+      }
 
-        // Update Supabase products table: image_url column as requested
-        try {
-          const isNum = !isNaN(Number(productId));
-          if (isNum) {
-            await supabase.from('products').update({ image_url: resultUrl, updated_at: now }).eq('id', Number(productId));
+      // Update Supabase products table: image_url & updated_at columns
+      try {
+        const isNum = !isNaN(Number(productId));
+        if (isNum) {
+          const { data: sbUpdated } = await supabase
+            .from('products')
+            .update({ image_url: resultUrl, updated_at: now })
+            .eq('id', Number(productId))
+            .select('*')
+            .maybeSingle();
+          if (sbUpdated && !updatedProduct) {
+            updatedProduct = {
+              ...sbUpdated,
+              id: String(sbUpdated.id),
+              name: sbUpdated.beverage_name,
+              flavor: sbUpdated.flavor_notes,
+            };
           }
-          const bevName = existing.beverage_name || existing.name;
-          if (bevName) {
-            await supabase.from('products').update({ image_url: resultUrl, updated_at: now }).ilike('beverage_name', bevName);
-          }
-        } catch (sbErr) {
-          console.warn('Supabase product image update warning:', sbErr);
         }
+        const bevName = existing?.beverage_name || existing?.name;
+        if (bevName) {
+          await supabase.from('products').update({ image_url: resultUrl, updated_at: now }).ilike('beverage_name', bevName);
+          db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE lower(name) = lower(?) OR lower(beverage_name) = lower(?)').run(resultUrl, now, bevName, bevName);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase product image update warning:', sbErr);
       }
     }
 
@@ -1260,27 +1487,44 @@ router.put('/products/:id/image', requireAuth, requireAdmin, async (req: Request
       return res.status(400).json({ error: 'imageUrl string is required' });
     }
 
+    const now = new Date().toISOString();
     const existing = db.prepare('SELECT id, name, beverage_name FROM products WHERE id = ?').get(productId) as any;
-    if (!existing) {
-      return res.status(404).json({ error: 'Product not found' });
+    let updated: any = null;
+    if (existing) {
+      db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE id = ?').run(imageUrl, now, productId);
+      updated = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     }
 
-    const now = new Date().toISOString();
-    db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE id = ?').run(imageUrl, now, productId);
-    const updated = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
-
-    // Update Supabase products table: image_url column as requested
+    // Update Supabase products table: image_url & updated_at columns
     try {
       const isNum = !isNaN(Number(productId));
       if (isNum) {
-        await supabase.from('products').update({ image_url: imageUrl, updated_at: now }).eq('id', Number(productId));
+        const { data: sbUpdated } = await supabase
+          .from('products')
+          .update({ image_url: imageUrl, updated_at: now })
+          .eq('id', Number(productId))
+          .select('*')
+          .maybeSingle();
+        if (sbUpdated && !updated) {
+          updated = {
+            ...sbUpdated,
+            id: String(sbUpdated.id),
+            name: sbUpdated.beverage_name,
+            flavor: sbUpdated.flavor_notes,
+          };
+        }
       }
-      const bevName = existing.beverage_name || existing.name;
+      const bevName = existing?.beverage_name || existing?.name || updated?.beverage_name;
       if (bevName) {
         await supabase.from('products').update({ image_url: imageUrl, updated_at: now }).ilike('beverage_name', bevName);
+        db.prepare('UPDATE products SET image_url = ?, updated_at = ? WHERE lower(name) = lower(?) OR lower(beverage_name) = lower(?)').run(imageUrl, now, bevName, bevName);
       }
     } catch (sbErr) {
       console.warn('Supabase product image update warning:', sbErr);
+    }
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Product not found' });
     }
 
     return res.json({ success: true, product: updated });
@@ -1592,6 +1836,66 @@ router.post('/orders', optionalAuth, async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/razorpay/create-order (Creates a genuine Razorpay Order in Test Mode via Orders API)
+router.post('/razorpay/create-order', optionalAuth, async (req: Request, res: Response) => {
+  try {
+    const { amount, items, contactNo, address } = req.body || {};
+    const grandTotal = Number(amount) || 0;
+    if (grandTotal <= 0) {
+      return res.status(400).json({ error: 'Order total must be greater than zero' });
+    }
+
+    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_TvKjTrYOGTa3u8';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'ZmrZH14WtFYpFyLzJJ75OzTq';
+    const userId = req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
+    const userEmail = req.user?.email || (req.headers['x-user-email'] as string) || 'customer@aurrabeverages.com';
+    const receipt = `rcpt_${Date.now()}`;
+
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: Math.round(grandTotal * 100), // paise
+        currency: 'INR',
+        receipt,
+        payment_capture: 1,
+        notes: {
+          user_id: String(userId),
+          user_email: userEmail,
+          contact_no: contactNo || '',
+          delivery_address: address || '',
+          items: JSON.stringify(items || []),
+        },
+      }),
+    });
+
+    const rzpData = await rzpRes.json().catch(() => ({}));
+    if (!rzpRes.ok || !rzpData?.id) {
+      console.error('Razorpay order creation failed:', rzpRes.status, rzpData);
+      return res.status(rzpRes.status || 502).json({
+        error: rzpData?.error?.description || 'Failed to create Razorpay order in Test Mode',
+      });
+    }
+
+    return res.json({
+      success: true,
+      key: keyId,
+      order_id: rzpData.id,
+      id: rzpData.id,
+      amount: rzpData.amount,
+      currency: rzpData.currency || 'INR',
+      receipt: rzpData.receipt || receipt,
+    });
+  } catch (err: any) {
+    console.error('Create Razorpay order error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to create Razorpay order' });
+  }
+});
+
 // POST /api/razorpay/create-qr (Generates dynamic single-use UPI QR code linked to iamironman798@okaxis)
 router.post('/razorpay/create-qr', optionalAuth, async (req: Request, res: Response) => {
   try {
@@ -1624,6 +1928,7 @@ router.post('/razorpay/create-qr', optionalAuth, async (req: Request, res: Respo
           amount: Math.round(grandTotal * 100), // paise
           currency: 'INR',
           receipt,
+          payment_capture: 1,
           notes: {
             user_id: String(userId),
             user_email: userEmail,
@@ -1663,6 +1968,7 @@ router.post('/razorpay/create-qr', optionalAuth, async (req: Request, res: Respo
 
     return res.json({
       success: true,
+      key: keyId,
       razorpayOrderId,
       amount: grandTotal,
       currency: 'INR',
@@ -1713,6 +2019,19 @@ router.post(['/razorpay-webhook', '/webhooks/razorpay'], async (req: Request, re
     const razorpayOrderId = payment.order_id || orderEntity.id || `rzp_${Date.now()}`;
     const paymentId = payment.id || `pay_${Date.now()}`;
     const notes = payment.notes || orderEntity.notes || {};
+
+    // Deduplicate webhook events if order was already recorded by Checkout handler
+    if (payment.id || payment.order_id || orderEntity.id) {
+      try {
+        const existingWebhookOrder = db
+          .prepare('SELECT id FROM orders WHERE (razorpay_payment_id IS NOT NULL AND razorpay_payment_id = ?) OR (razorpay_order_id IS NOT NULL AND razorpay_order_id = ?) LIMIT 1')
+          .get(paymentId, razorpayOrderId) as { id: string } | undefined;
+        if (existingWebhookOrder?.id) {
+          console.log(`[Razorpay Webhook] Payment ${paymentId} already recorded on order ${existingWebhookOrder.id}`);
+          return res.status(200).json({ status: 'ok', received: true, alreadyRecorded: true, orderId: existingWebhookOrder.id });
+        }
+      } catch {}
+    }
 
     const userEmail = (notes.user_email || payment.email || '').toString().trim().toLowerCase();
     const userIdentifier = notes.user_id;
@@ -1820,6 +2139,7 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
     const {
       razorpayOrderId,
       paymentId,
+      razorpaySignature,
       items,
       amount,
       userId: bodyUserId,
@@ -1828,11 +2148,48 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
       contactNo: bodyContactNo,
       deliveryAddress: bodyDeliveryAddress,
     } = req.body || {};
+
+    // Verify official Razorpay Checkout HMAC-SHA256 signature when provided
+    if (razorpayOrderId && paymentId && razorpaySignature) {
+      const keySecret = process.env.RAZORPAY_KEY_SECRET || 'ZmrZH14WtFYpFyLzJJ75OzTq';
+      const expectedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${razorpayOrderId}|${paymentId}`)
+        .digest('hex');
+
+      if (expectedSignature !== razorpaySignature) {
+        return res.status(400).json({ error: 'Invalid Razorpay payment signature' });
+      }
+    }
+
     const userId = bodyUserId || req.user?.id || (req.headers['x-user-id'] as string) || 'guest';
     const userEmail = (bodyUserEmail || req.user?.email || (req.headers['x-user-email'] as string) || '').toLowerCase().trim();
     const now = new Date().toISOString();
     const orderId = generateId('ord');
     const totalAmount = Number(amount) || 0;
+
+    // Return existing order if webhook already recorded this payment_id
+    if (paymentId && paymentId.startsWith('pay_') && razorpayOrderId && razorpayOrderId.startsWith('order_')) {
+      try {
+        const existing = db
+          .prepare('SELECT id, user_id, total, status, created_at, razorpay_order_id, razorpay_payment_id FROM orders WHERE razorpay_payment_id = ? LIMIT 1')
+          .get(paymentId) as any;
+        if (existing?.id) {
+          const existingItems = db
+            .prepare('SELECT id, product_id, name_snapshot, price_snapshot, qty FROM order_items WHERE order_id = ?')
+            .all(existing.id);
+          return res.status(200).json({
+            success: true,
+            order: {
+              ...existing,
+              razorpayOrderId: existing.razorpay_order_id || razorpayOrderId,
+              razorpayPaymentId: existing.razorpay_payment_id || paymentId,
+              items: existingItems,
+            },
+          });
+        }
+      } catch {}
+    }
 
     // Resolve Supabase user ID reliably
     let sbUserId: number | null = null;
@@ -1847,7 +2204,7 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
     }
     if (!sbUserId && bodyContactNo) {
       try {
-        const { data: u } = await supabase.from('users').select('id').or(`contact_no.eq.${bodyContactNo},"contact_no.".eq.${bodyContactNo}`).maybeSingle();
+        const { data: u } = await supabase.from('users').select('id').eq('contact_no.', bodyContactNo).maybeSingle();
         if (u?.id) sbUserId = Number(u.id);
       } catch {}
     }
@@ -2028,6 +2385,9 @@ router.post('/orders/confirm-payment', optionalAuth, async (req: Request, res: R
         created_at: now,
         items: resolvedItems,
         razorpayOrderId,
+        razorpay_order_id: razorpayOrderId || null,
+        razorpay_payment_id: paymentId || null,
+        razorpayPaymentId: paymentId || null,
       },
     });
   } catch (err: any) {
@@ -2201,12 +2561,13 @@ router.get('/admin/orders', optionalAuth, async (_req: Request, res: Response) =
 
           if (sbo.user_id) {
             try {
-              const { data: u } = await supabase.from('users').select('name, email, delivery_address, contact_no, "contact_no."').eq('id', sbo.user_id).maybeSingle();
+              const { data: u } = await supabase.from('users').select('*').eq('id', sbo.user_id).maybeSingle();
               if (u) {
                 customerEmail = u.email || '';
                 customerName = u.name || '';
                 customerAddress = u.delivery_address || '';
-                customerContact = u['contact_no.'] || u.contact_no || '';
+                const rawC = u['contact_no.'] ?? u.contact_no;
+                customerContact = rawC != null ? String(rawC) : '';
               }
             } catch {}
           }
@@ -2358,12 +2719,13 @@ router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => 
             delivery_address = CASE WHEN ? != '' THEN ? ELSE delivery_address END,
             contact_no = CASE WHEN ? != '' THEN ? ELSE contact_no END,
             updated_at = ?
-        WHERE id = ? OR email = ?
+        WHERE id = ? OR lower(email) = lower(?)
       `).run(cleanName, finalAddress, finalAddress, cleanDigits, cleanDigits, now, req.user!.id, req.user!.email);
     } catch (sqlErr) {
       console.warn('SQLite profile update note:', sqlErr);
     }
 
+    let sbUser: any = null;
     try {
       const updateData: any = { name: cleanName, updated_at: now };
       if (finalAddress) {
@@ -2371,27 +2733,34 @@ router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => 
       }
       if (cleanDigits) {
         updateData['contact_no.'] = cleanDigits;
-        updateData.contact_no = cleanDigits;
       }
-      await supabase
+      const { data } = await supabase
         .from('users')
         .update(updateData)
-        .ilike('email', req.user!.email);
+        .ilike('email', req.user!.email.trim())
+        .select('*')
+        .maybeSingle();
+      sbUser = data;
     } catch (sbErr) {
       console.warn('Supabase profile update warning:', sbErr);
     }
 
     let updated: any = null;
     try {
-      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR email = ?').get(req.user!.id, req.user!.email);
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
     } catch {}
 
+    const rawContactVal = cleanDigits || sbUser?.['contact_no.'] || sbUser?.contact_no || updated?.contact_no || (req.user as any)?.contact_no;
+    const finalProfile = sbUser?.user_profile || sbUser?.avatar_url || updated?.user_profile || updated?.avatar_url || req.user?.avatar_url || null;
     const returnUser = {
       ...req.user,
       ...(updated || {}),
       name: cleanName,
-      delivery_address: finalAddress || updated?.delivery_address || req.user?.delivery_address,
-      contact_no: cleanDigits || updated?.contact_no || (req.user as any)?.contact_no,
+      delivery_address: finalAddress || sbUser?.delivery_address || updated?.delivery_address || req.user?.delivery_address || null,
+      contact_no: rawContactVal != null ? String(rawContactVal) : null,
+      avatar_url: finalProfile,
+      user_profile: finalProfile,
+      updated_at: now,
     };
 
     return res.json({ success: true, user: returnUser });
@@ -2413,31 +2782,56 @@ router.put('/auth/address', requireAuth, async (req: Request, res: Response) => 
 
     const now = new Date().toISOString();
 
-    // 1. Update SQLite
-    db.prepare(`
-      UPDATE users
-      SET delivery_address = ?, updated_at = ?
-      WHERE id = ?
-    `).run(finalAddress, now, req.user!.id);
+    // 1. Update SQLite if available
+    try {
+      db.prepare(`
+        UPDATE users
+        SET delivery_address = ?, updated_at = ?
+        WHERE id = ? OR lower(email) = lower(?)
+      `).run(finalAddress, now, req.user!.id, req.user!.email);
+    } catch (sqlErr) {
+      console.warn('SQLite address update note:', sqlErr);
+    }
 
     // 2. Update Supabase users table (created_at remains intact; updated_at captures change)
+    let sbUser: any = null;
     try {
-      await supabase
+      const { data } = await supabase
         .from('users')
         .update({
           delivery_address: finalAddress,
           updated_at: now,
         })
-        .eq('email', req.user!.email);
+        .ilike('email', req.user!.email.trim())
+        .select('*')
+        .maybeSingle();
+      sbUser = data;
     } catch (sbErr) {
       console.warn('Supabase address update warning (RLS/policy):', sbErr);
     }
 
-    const updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(req.user!.id);
+    let updated: any = null;
+    try {
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
+    } catch {}
+
+    const rawContactVal = sbUser?.['contact_no.'] ?? sbUser?.contact_no ?? updated?.contact_no ?? (req.user as any)?.contact_no;
+    const finalProfile = sbUser?.user_profile || sbUser?.avatar_url || updated?.user_profile || updated?.avatar_url || req.user?.avatar_url || null;
+    const returnUser = {
+      ...req.user,
+      ...(updated || {}),
+      name: sbUser?.name || updated?.name || req.user!.name,
+      delivery_address: finalAddress,
+      contact_no: rawContactVal != null ? String(rawContactVal) : null,
+      avatar_url: finalProfile,
+      user_profile: finalProfile,
+      updated_at: now,
+    };
+
     return res.json({
       success: true,
       message: 'Delivery address saved successfully!',
-      user: updated,
+      user: returnUser,
     });
   } catch (err) {
     console.error('Update delivery address error:', err);
@@ -2463,33 +2857,44 @@ router.put('/auth/contact-no', requireAuth, async (req: Request, res: Response) 
       db.prepare(`
         UPDATE users
         SET contact_no = ?, updated_at = ?
-        WHERE id = ?
-      `).run(cleanDigits, now, req.user!.id);
+        WHERE id = ? OR lower(email) = lower(?)
+      `).run(cleanDigits, now, req.user!.id, req.user!.email);
     } catch (sqlErr) {
       console.warn('SQLite contact update note:', sqlErr);
     }
 
     // 2. Update Supabase users table (writing to 'contact_no.' column)
+    let sbUser: any = null;
     try {
-      await supabase
+      const { data } = await supabase
         .from('users')
         .update({
           'contact_no.': cleanDigits,
           updated_at: now,
         })
-        .eq('email', req.user!.email);
+        .ilike('email', req.user!.email.trim())
+        .select('*')
+        .maybeSingle();
+      sbUser = data;
     } catch (sbErr) {
       console.warn('Supabase contact update note:', sbErr);
     }
 
     let updated: any = null;
     try {
-      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, contact_no, parent_id FROM users WHERE id = ?').get(req.user!.id);
+      updated = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(req.user!.id, req.user!.email);
     } catch {}
 
-    const returnUser = updated || {
+    const finalProfile = sbUser?.user_profile || sbUser?.avatar_url || updated?.user_profile || updated?.avatar_url || req.user?.avatar_url || null;
+    const returnUser = {
       ...req.user,
+      ...(updated || {}),
+      name: sbUser?.name || updated?.name || req.user!.name,
+      delivery_address: sbUser?.delivery_address || updated?.delivery_address || req.user?.delivery_address || null,
       contact_no: cleanDigits,
+      avatar_url: finalProfile,
+      user_profile: finalProfile,
+      updated_at: now,
     };
 
     return res.json({

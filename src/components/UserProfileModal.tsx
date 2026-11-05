@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, User as UserIcon, Mail, ShieldCheck, Calendar, LogOut, Package, Check, Edit2, Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Order } from '../types';
@@ -22,6 +22,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [updating, setUpdating] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      setNameInput(user.name || '');
+    }
+  }, [user?.name, isOpen]);
 
   if (!isOpen || !user) return null;
 

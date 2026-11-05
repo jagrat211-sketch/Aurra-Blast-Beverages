@@ -58,6 +58,9 @@ export interface Order {
   status: string;
   created_at: string;
   items: OrderItem[];
+  razorpay_order_id?: string;
+  razorpay_payment_id?: string;
+  razorpayPaymentId?: string;
 }
 
 export interface CartEventRecord {

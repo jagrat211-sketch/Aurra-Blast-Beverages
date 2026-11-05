@@ -15,7 +15,9 @@ export interface AuthUser {
   created_at?: string;
   updated_at?: string;
   avatar_url?: string;
+  user_profile?: string;
   delivery_address?: string;
+  contact_no?: string;
   parent_id?: string;
 }
 
@@ -88,28 +90,42 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
       let user: AuthUser | undefined = undefined;
       try {
-        user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(payload.id) as AuthUser | undefined;
+        user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ? OR lower(email) = lower(?)').get(payload.id, payload.email || '') as AuthUser | undefined;
       } catch {
         user = undefined;
       }
 
       if (!user) {
         try {
-          const query = supabase.from('users').select('*');
-          if (payload.email) query.ilike('email', payload.email.toLowerCase().trim());
-          else query.eq('id', payload.id);
+          let query = supabase.from('users').select('*');
+          if (payload.email) {
+            query = query.ilike('email', payload.email.toLowerCase().trim());
+          } else if (payload.id && !isNaN(Number(payload.id))) {
+            query = query.eq('id', Number(payload.id));
+          } else if (payload.id === 'admin_sys_01' || payload.role === 'admin') {
+            query = query.ilike('email', 'adminaurra@beverages.com');
+          }
           const { data: sbUser } = await query.maybeSingle();
           if (sbUser) {
+            const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no;
+            const resolvedRole =
+              sbUser.role === 'admin' ||
+              sbUser.email?.toLowerCase().trim() === 'adminaurra@beverages.com' ||
+              payload.role === 'admin'
+                ? 'admin'
+                : 'user';
             user = {
               id: String(sbUser.id),
               name: sbUser.name || 'Aurra User',
               email: sbUser.email,
-              role: sbUser.role || 'user',
+              role: resolvedRole,
               email_verified: 1,
               created_at: sbUser.created_at,
               updated_at: sbUser.updated_at,
-              avatar_url: sbUser.avatar_url || sbUser.user_profile,
+              avatar_url: sbUser.user_profile || sbUser.avatar_url,
+              user_profile: sbUser.user_profile || sbUser.avatar_url,
               delivery_address: sbUser.delivery_address,
+              contact_no: rawContact != null ? String(rawContact) : undefined,
               parent_id: 'AURRA-DIST-IND-01',
             };
           }
@@ -131,6 +147,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       }
 
       if (user) {
+        if (
+          payload.role === 'admin' ||
+          user.email?.toLowerCase().trim() === 'adminaurra@beverages.com'
+        ) {
+          user.role = 'admin';
+        }
         req.user = user;
         return next();
       }
@@ -147,31 +169,40 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     let fallbackUser: AuthUser | undefined = undefined;
     if (fallbackUserId) {
       try {
-        fallbackUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(fallbackUserId) as any;
+        fallbackUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ?').get(fallbackUserId) as any;
       } catch {}
     }
     if (!fallbackUser && fallbackUserEmail) {
       try {
-        fallbackUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE email = ?').get(fallbackUserEmail.toLowerCase().trim()) as any;
+        fallbackUser = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE lower(email) = ?').get(fallbackUserEmail.toLowerCase().trim()) as any;
       } catch {}
     }
-    if (!fallbackUser && (fallbackUserEmail || fallbackUserId)) {
+    if (!fallbackUser && (fallbackUserEmail || (fallbackUserId && !isNaN(Number(fallbackUserId))))) {
       try {
-        const query = supabase.from('users').select('*');
-        if (fallbackUserEmail) query.ilike('email', fallbackUserEmail.toLowerCase().trim());
-        else if (fallbackUserId) query.eq('id', fallbackUserId);
+        let query = supabase.from('users').select('*');
+        if (fallbackUserEmail) query = query.ilike('email', fallbackUserEmail.toLowerCase().trim());
+        else if (fallbackUserId && !isNaN(Number(fallbackUserId))) query = query.eq('id', Number(fallbackUserId));
         const { data: sbUser } = await query.maybeSingle();
         if (sbUser) {
+          const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no;
+          const resolvedRole =
+            sbUser.role === 'admin' ||
+            sbUser.email?.toLowerCase().trim() === 'adminaurra@beverages.com' ||
+            (req.headers['x-user-role'] as string) === 'admin'
+              ? 'admin'
+              : 'user';
           fallbackUser = {
             id: String(sbUser.id),
             name: sbUser.name || 'Aurra Customer',
             email: sbUser.email,
-            role: sbUser.role || 'user',
+            role: resolvedRole,
             email_verified: 1,
             created_at: sbUser.created_at,
             updated_at: sbUser.updated_at,
-            avatar_url: sbUser.avatar_url || sbUser.user_profile,
+            avatar_url: sbUser.user_profile || sbUser.avatar_url,
+            user_profile: sbUser.user_profile || sbUser.avatar_url,
             delivery_address: sbUser.delivery_address,
+            contact_no: rawContact != null ? String(rawContact) : undefined,
             parent_id: 'AURRA-DIST-IND-01',
           };
         }
@@ -179,6 +210,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     if (fallbackUser) {
+      if (fallbackUser.email?.toLowerCase().trim() === 'adminaurra@beverages.com') {
+        fallbackUser.role = 'admin';
+      }
       req.user = fallbackUser;
       return next();
     }
@@ -206,22 +240,28 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
       const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
       let user: any = undefined;
       try {
-        user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(payload.id);
+        user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ?').get(payload.id);
       } catch {}
 
       if (!user && payload.email) {
         try {
-          user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE email = ?').get(payload.email.toLowerCase().trim());
+          user = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE lower(email) = ?').get(payload.email.toLowerCase().trim());
         } catch {}
       }
 
       if (!user) {
         try {
-          const query = supabase.from('users').select('*');
-          if (payload.email) query.ilike('email', payload.email.toLowerCase().trim());
-          else query.eq('id', payload.id);
+          let query = supabase.from('users').select('*');
+          if (payload.email) {
+            query = query.ilike('email', payload.email.toLowerCase().trim());
+          } else if (payload.id && !isNaN(Number(payload.id))) {
+            query = query.eq('id', Number(payload.id));
+          } else if (payload.id === 'admin_sys_01' || payload.role === 'admin') {
+            query = query.ilike('email', 'adminaurra@beverages.com');
+          }
           const { data: sbUser } = await query.maybeSingle();
           if (sbUser) {
+            const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no;
             user = {
               id: String(sbUser.id),
               name: sbUser.name || 'Aurra User',
@@ -230,8 +270,10 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
               email_verified: 1,
               created_at: sbUser.created_at,
               updated_at: sbUser.updated_at,
-              avatar_url: sbUser.avatar_url || sbUser.user_profile,
+              avatar_url: sbUser.user_profile || sbUser.avatar_url,
+              user_profile: sbUser.user_profile || sbUser.avatar_url,
               delivery_address: sbUser.delivery_address,
+              contact_no: rawContact != null ? String(rawContact) : undefined,
               parent_id: 'AURRA-DIST-IND-01',
             };
           }
@@ -267,17 +309,18 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
     try {
       let u: any = undefined;
       if (fallbackUserId) {
-        u = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE id = ?').get(fallbackUserId);
+        u = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE id = ?').get(fallbackUserId);
       }
       if (!u && fallbackUserEmail) {
-        u = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, delivery_address, parent_id FROM users WHERE email = ?').get(fallbackUserEmail.toLowerCase().trim());
+        u = db.prepare('SELECT id, name, email, role, email_verified, created_at, updated_at, avatar_url, user_profile, delivery_address, contact_no, parent_id FROM users WHERE lower(email) = ?').get(fallbackUserEmail.toLowerCase().trim());
       }
-      if (!u && (fallbackUserEmail || fallbackUserId)) {
-        const query = supabase.from('users').select('*');
-        if (fallbackUserEmail) query.ilike('email', fallbackUserEmail.toLowerCase().trim());
-        else if (fallbackUserId) query.eq('id', fallbackUserId);
+      if (!u && (fallbackUserEmail || (fallbackUserId && !isNaN(Number(fallbackUserId))))) {
+        let query = supabase.from('users').select('*');
+        if (fallbackUserEmail) query = query.ilike('email', fallbackUserEmail.toLowerCase().trim());
+        else if (fallbackUserId && !isNaN(Number(fallbackUserId))) query = query.eq('id', Number(fallbackUserId));
         const { data: sbUser } = await query.maybeSingle();
         if (sbUser) {
+          const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no;
           u = {
             id: String(sbUser.id),
             name: sbUser.name || 'Aurra Customer',
@@ -286,8 +329,10 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
             email_verified: 1,
             created_at: sbUser.created_at,
             updated_at: sbUser.updated_at,
-            avatar_url: sbUser.avatar_url || sbUser.user_profile,
+            avatar_url: sbUser.user_profile || sbUser.avatar_url,
+            user_profile: sbUser.user_profile || sbUser.avatar_url,
             delivery_address: sbUser.delivery_address,
+            contact_no: rawContact != null ? String(rawContact) : undefined,
             parent_id: 'AURRA-DIST-IND-01',
           };
         }

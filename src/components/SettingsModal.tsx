@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   User as UserIcon,
@@ -30,23 +30,33 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const { user, updateProfile, changePassword, updateAvatar, updateAddress, updateContactNo } = useAuth();
+  const { user, refreshUser, updateProfile, changePassword, updateAvatar, updateAddress, updateContactNo } = useAuth();
 
   // Active section inside Settings: 'profile' | 'security'
   const [activeTab, setActiveTab] = useState<'profile' | 'security'>('profile');
+
+  const normalizeIndianPhone = (val: unknown): string => {
+    const digits = String(val ?? '').replace(/\D/g, '');
+    if (digits.length > 10 && digits.startsWith('91')) {
+      return digits.slice(2, 12);
+    }
+    return digits.slice(0, 10);
+  };
 
   // Name edit state
   const [nameInput, setNameInput] = useState(user?.name || '');
   const [updatingName, setUpdatingName] = useState(false);
   const [nameSuccess, setNameSuccess] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Delivery Address edit state
   const [addressInput, setAddressInput] = useState(user?.delivery_address || '');
   const [updatingAddress, setUpdatingAddress] = useState(false);
   const [addressSuccess, setAddressSuccess] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   // Contact No. edit state (India +91, 10 digits only)
-  const [contactNoInput, setContactNoInput] = useState(user?.contact_no || '');
+  const [contactNoInput, setContactNoInput] = useState(normalizeIndianPhone(user?.contact_no));
   const [updatingContactNo, setUpdatingContactNo] = useState(false);
   const [contactNoError, setContactNoError] = useState<string | null>(null);
   const [contactNoSuccess, setContactNoSuccess] = useState(false);
@@ -70,6 +80,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   // Copy helper
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // Refresh latest saved user fields from database whenever Settings modal opens
+  useEffect(() => {
+    if (isOpen) {
+      refreshUser();
+      setNameSuccess(false);
+      setNameError(null);
+      setAddressSuccess(false);
+      setAddressError(null);
+      setContactNoSuccess(false);
+      setContactNoError(null);
+      setPasswordError(null);
+      setPasswordSuccess(false);
+      setAvatarError(null);
+      setAvatarSuccess(null);
+      setPendingAvatar(null);
+    }
+  }, [isOpen, refreshUser]);
+
+  // Keep Display Name, Delivery Address, and Contact No. pre-filled from saved user profile
+  useEffect(() => {
+    if (user) {
+      setNameInput(user.name || '');
+      setAddressInput(user.delivery_address || '');
+      setContactNoInput(normalizeIndianPhone(user.contact_no));
+    }
+  }, [user?.id, user?.name, user?.delivery_address, user?.contact_no, isOpen]);
+
   if (!isOpen || !user) return null;
 
   const handleCopy = (text: string, field: string) => {
@@ -80,15 +117,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   const handleUpdateName = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameInput.trim() || nameInput.trim() === user.name) return;
+    setNameError(null);
+    const trimmed = nameInput.trim();
+    if (!trimmed || trimmed === (user.name || '').trim()) return;
+    if (trimmed.length < 2) {
+      setNameError('Display name must be at least 2 characters long.');
+      return;
+    }
     setUpdatingName(true);
     setNameSuccess(false);
     try {
-      await updateProfile(nameInput.trim());
+      await updateProfile(trimmed);
       setNameSuccess(true);
       setTimeout(() => setNameSuccess(false), 3000);
     } catch (err: any) {
-      console.error(err);
+      setNameError(err.message || 'Failed to update display name');
     } finally {
       setUpdatingName(false);
     }
@@ -96,15 +139,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   const handleUpdateAddress = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addressInput.trim() || addressInput.trim() === user.delivery_address) return;
+    setAddressError(null);
+    const trimmed = addressInput.trim();
+    if (!trimmed || trimmed === (user.delivery_address || '').trim()) return;
+    if (trimmed.length < 5) {
+      setAddressError('Please enter a complete delivery address (minimum 5 characters).');
+      return;
+    }
     setUpdatingAddress(true);
     setAddressSuccess(false);
     try {
-      await updateAddress(addressInput.trim());
+      await updateAddress(trimmed);
       setAddressSuccess(true);
       setTimeout(() => setAddressSuccess(false), 3000);
     } catch (err: any) {
-      console.error(err);
+      setAddressError(err.message || 'Failed to update delivery address');
     } finally {
       setUpdatingAddress(false);
     }
@@ -118,7 +167,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
       setContactNoError('Please enter a valid 10-digit Indian mobile number.');
       return;
     }
-    if (cleaned === user?.contact_no) return;
+    if (cleaned === normalizeIndianPhone(user?.contact_no)) return;
 
     setUpdatingContactNo(true);
     setContactNoSuccess(false);
@@ -469,17 +518,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   id="settings-name-input"
                   type="text"
                   value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
+                  onChange={(e) => {
+                    setNameInput(e.target.value);
+                    if (nameError) setNameError(null);
+                  }}
                   className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                 />
                 <button
                   type="submit"
-                  disabled={updatingName || nameInput.trim() === user.name}
+                  disabled={updatingName || !nameInput.trim() || nameInput.trim() === (user.name || '').trim()}
                   className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-40 transition-colors shrink-0 cursor-pointer"
                 >
                   {updatingName ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save Name'}
                 </button>
               </div>
+              {nameError && (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>{nameError}</span>
+                </p>
+              )}
               {nameSuccess && (
                 <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                   <Check className="h-3 w-3" />
@@ -499,18 +557,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   id="settings-address-input"
                   rows={2}
                   value={addressInput}
-                  onChange={(e) => setAddressInput(e.target.value)}
+                  onChange={(e) => {
+                    setAddressInput(e.target.value);
+                    if (addressError) setAddressError(null);
+                  }}
                   placeholder="Enter house/flat no., street, area, city & PIN code"
                   className="flex-1 rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
                 />
                 <button
                   type="submit"
-                  disabled={updatingAddress || !addressInput.trim() || addressInput.trim() === user.delivery_address}
+                  disabled={updatingAddress || !addressInput.trim() || addressInput.trim() === (user.delivery_address || '').trim()}
                   className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-40 transition-colors shrink-0 self-end cursor-pointer"
                 >
                   {updatingAddress ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save Address'}
                 </button>
               </div>
+              {addressError && (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>{addressError}</span>
+                </p>
+              )}
               {addressSuccess && (
                 <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                   <Check className="h-3 w-3" />
@@ -553,7 +620,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 </div>
                 <button
                   type="submit"
-                  disabled={updatingContactNo || contactNoInput.replace(/\D/g, '').length !== 10 || contactNoInput.replace(/\D/g, '') === user.contact_no}
+                  disabled={updatingContactNo || contactNoInput.replace(/\D/g, '').length !== 10 || contactNoInput.replace(/\D/g, '') === normalizeIndianPhone(user.contact_no)}
                   className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-40 transition-colors shrink-0 cursor-pointer"
                 >
                   {updatingContactNo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save Contact'}

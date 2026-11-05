@@ -64,6 +64,18 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({ order, onC
             </span>
           </div>
 
+          {(order.razorpay_payment_id || order.razorpayPaymentId) && (
+            <div className="flex items-center justify-between text-xs">
+              <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                Payment ID
+              </span>
+              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400 truncate max-w-[180px]">
+                {order.razorpay_payment_id || order.razorpayPaymentId}
+              </span>
+            </div>
+          )}
+
           <div className="border-t border-slate-200 dark:border-slate-700 pt-2 flex items-center justify-between text-sm font-bold text-slate-900 dark:text-white">
             <span>Total Amount Paid</span>
             <span className="tabular-nums text-amber-600 dark:text-amber-400">

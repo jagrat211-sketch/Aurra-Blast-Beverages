@@ -67,6 +67,7 @@ export const AdminPage: React.FC = () => {
   // New product form with full Inventory & Stock Management fields
   const [productForm, setProductForm] = useState({
     id: '',
+    originalName: '',
     name: '',
     flavor: '',
     price: '' as string | number,
@@ -75,15 +76,17 @@ export const AdminPage: React.FC = () => {
     volume: '',
     calories: '' as string | number,
     category: '',
-    total_quantity: 50,
-    remaining_quantity: 50,
+    total_quantity: 50 as string | number,
+    remaining_quantity: 50 as string | number,
     active: 1,
   });
   const [imagePreview, setImagePreview] = useState<string>('');
   const [isFormCropModalOpen, setIsFormCropModalOpen] = useState(false);
   const productFileInputRef = useRef<HTMLInputElement>(null);
+  const productFormRef = useRef<HTMLFormElement>(null);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productSuccess, setProductSuccess] = useState<string | null>(null);
+  const [productError, setProductError] = useState<string | null>(null);
 
   // Users
   const [usersList, setUsersList] = useState<any[]>([]);
@@ -284,36 +287,46 @@ export const AdminPage: React.FC = () => {
 
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    setProductError(null);
+
     if (!productForm.name.trim()) {
-      alert('Please enter a beverage name');
+      setProductError('Please enter a beverage name');
       return;
     }
     if (!productForm.flavor.trim()) {
-      alert('Please enter flavor notes');
+      setProductError('Please enter flavor notes');
       return;
     }
     if (productForm.price === '' || Number(productForm.price) <= 0) {
-      alert('Please enter a valid price in ₹ INR');
+      setProductError('Please enter a valid price in ₹ INR');
       return;
     }
     if (!productForm.volume.trim()) {
-      alert('Please enter beverage volume (e.g. 330ml)');
+      setProductError('Please enter beverage volume (e.g. 330ml)');
       return;
     }
     if (productForm.calories === '' || Number(productForm.calories) < 0) {
-      alert('Please enter calorie count (e.g. 40)');
+      setProductError('Please enter calorie count (e.g. 40)');
+      return;
+    }
+    if (productForm.total_quantity === '' || Number(productForm.total_quantity) < 0) {
+      setProductError('Please enter a valid total stock quantity (0 or greater)');
+      return;
+    }
+    if (productForm.remaining_quantity === '' || Number(productForm.remaining_quantity) < 0) {
+      setProductError('Please enter a valid remaining stock quantity (0 or greater)');
       return;
     }
     if (!productForm.category) {
-      alert('Please select a beverage category from the dropdown');
+      setProductError('Please select a beverage category from the dropdown');
       return;
     }
-    if (!productForm.description.trim()) {
-      alert('Please enter a beverage description');
+    if (!productForm.id && !productForm.description.trim()) {
+      setProductError('Please enter a beverage description');
       return;
     }
-    if (!productForm.image_url) {
-      alert('Please choose an image file for this beverage');
+    if (!productForm.id && !productForm.image_url) {
+      setProductError('Please choose an image file for this beverage');
       return;
     }
 
@@ -321,12 +334,13 @@ export const AdminPage: React.FC = () => {
     setProductSuccess(null);
 
     try {
-      let finalImageUrl = productForm.image_url;
+      let finalImageUrl = productForm.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg';
       if (finalImageUrl.startsWith('data:image/')) {
         try {
           const uploadRes = await api.uploadBeverageImage({
             imageBase64: finalImageUrl,
             filename: `${productForm.name || 'product'}.jpg`,
+            productId: productForm.id || undefined,
           });
           if (uploadRes?.url) {
             finalImageUrl = uploadRes.url;
@@ -336,23 +350,35 @@ export const AdminPage: React.FC = () => {
         }
       }
 
+      const wasEditing = Boolean(productForm.id);
       await api.saveProduct({
-        ...productForm,
+        id: productForm.id || undefined,
+        originalName: productForm.originalName || undefined,
+        name: productForm.name.trim(),
+        flavor: productForm.flavor.trim(),
+        category: productForm.category,
+        description: productForm.description.trim(),
+        volume: productForm.volume.trim(),
         image_url: finalImageUrl,
         price: Number(productForm.price),
         calories: Number(productForm.calories),
         total_quantity: Number(productForm.total_quantity),
         remaining_quantity: Number(productForm.remaining_quantity),
+        active: productForm.active,
       });
 
-      setProductSuccess('Beverage flavor saved successfully to database!');
-      setTimeout(() => setProductSuccess(null), 3000);
+      await Promise.all([loadProducts(), loadOverview()]);
+      setProductSuccess(
+        wasEditing
+          ? `Updated "${productForm.name.trim()}" and synced updated_at timestamp to database!`
+          : 'New beverage flavor saved successfully to database!'
+      );
+      setTimeout(() => setProductSuccess(null), 5000);
       setIsEditingProduct(false);
-      loadProducts();
-      loadOverview();
       // Reset form to blank defaults, leaving total and remaining stock as 50
       setProductForm({
         id: '',
+        originalName: '',
         name: '',
         flavor: '',
         price: '',
@@ -367,7 +393,7 @@ export const AdminPage: React.FC = () => {
       });
       setImagePreview('');
     } catch (err: any) {
-      alert(err.message || 'Failed to save product');
+      setProductError(err.message || 'Failed to save product');
     } finally {
       setSavingProduct(false);
     }
@@ -549,8 +575,10 @@ export const AdminPage: React.FC = () => {
             <button
               onClick={() => {
                 setIsEditingProduct(!isEditingProduct);
+                setProductError(null);
                 setProductForm({
                   id: '',
+                  originalName: '',
                   name: '',
                   flavor: '',
                   price: '',
@@ -565,28 +593,48 @@ export const AdminPage: React.FC = () => {
                 });
                 setImagePreview('');
               }}
-              className="flex items-center gap-1.5 rounded-xl bg-amber-500 py-2 px-3.5 text-xs font-semibold text-white shadow-xs hover:bg-amber-600 transition-colors"
+              className="flex items-center gap-1.5 rounded-xl bg-amber-500 py-2 px-3.5 text-xs font-semibold text-white shadow-xs hover:bg-amber-600 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               <span>{isEditingProduct ? 'Close Editor' : 'Add New Beverage'}</span>
             </button>
           </div>
 
+          {/* Persistent Product Update / Creation Success Banner */}
+          {productSuccess && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 text-xs font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>{productSuccess}</span>
+            </div>
+          )}
+
           {/* New / Edit Product Form */}
           {isEditingProduct && (
             <form
+              ref={productFormRef}
               onSubmit={handleSaveProduct}
-              className="rounded-2xl border border-slate-200 bg-white p-6 shadow-md dark:border-slate-800 dark:bg-slate-900 space-y-4"
+              className="rounded-2xl border border-slate-200 bg-white p-6 shadow-md dark:border-slate-800 dark:bg-slate-900 space-y-4 scroll-mt-24"
             >
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-amber-500" />
-                <span>{productForm.id ? 'Edit Beverage' : 'New Beverage Formulation'}</span>
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <span>
+                    {productForm.id
+                      ? `Edit Formulation & Stock — ${productForm.originalName || productForm.name}`
+                      : 'New Beverage Formulation'}
+                  </span>
+                </h3>
+                {productForm.id && (
+                  <span className="rounded-md bg-amber-100 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    ID: {productForm.id}
+                  </span>
+                )}
+              </div>
 
-              {productSuccess && (
-                <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>{productSuccess}</span>
+              {productError && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{productError}</span>
                 </div>
               )}
 
@@ -625,7 +673,8 @@ export const AdminPage: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    min="1"
+                    min="0.01"
+                    step="any"
                     value={productForm.price}
                     onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
                     required
@@ -669,7 +718,8 @@ export const AdminPage: React.FC = () => {
                     min="0"
                     value={productForm.total_quantity}
                     onChange={(e) => {
-                      const val = Number(e.target.value);
+                      const raw = e.target.value;
+                      const val = raw === '' ? '' : Number(raw);
                       setProductForm((prev) => ({
                         ...prev,
                         total_quantity: val,
@@ -691,7 +741,13 @@ export const AdminPage: React.FC = () => {
                     type="number"
                     min="0"
                     value={productForm.remaining_quantity}
-                    onChange={(e) => setProductForm({ ...productForm, remaining_quantity: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setProductForm({
+                        ...productForm,
+                        remaining_quantity: raw === '' ? '' : Number(raw),
+                      });
+                    }}
                     required
                     placeholder="e.g. 50"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -710,6 +766,10 @@ export const AdminPage: React.FC = () => {
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 >
                   <option value="" disabled>-- Select Beverage Category --</option>
+                  {productForm.category &&
+                    !BEVERAGE_CATEGORIES.includes(productForm.category as any) && (
+                      <option value={productForm.category}>{productForm.category}</option>
+                    )}
                   {BEVERAGE_CATEGORIES.map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
@@ -726,7 +786,7 @@ export const AdminPage: React.FC = () => {
                   value={productForm.description}
                   onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
                   rows={2}
-                  required
+                  required={!productForm.id}
                   placeholder="Artisan tasting notes and natural botanical ingredients..."
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-2.5 text-xs text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
@@ -881,6 +941,17 @@ export const AdminPage: React.FC = () => {
                         <span className="text-[9px] text-slate-500 dark:text-slate-400">/ {p.total_quantity ?? 50}</span>
                       </span>
                     </div>
+                    {/* Category & Last Updated Metadata */}
+                    <div className="mt-1 flex items-center justify-between gap-1 text-[10px] text-slate-400">
+                      <span className="truncate font-medium text-slate-500 dark:text-slate-400">
+                        {p.category || 'Botanical Sparkler'}
+                      </span>
+                      {p.updated_at && (
+                        <span className="shrink-0 font-mono text-[9.5px]" title={`Last updated: ${p.updated_at}`}>
+                          Updated {new Date(p.updated_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -897,24 +968,32 @@ export const AdminPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
+                      const currentName = p.beverage_name || p.name;
                       setIsEditingProduct(true);
+                      setProductError(null);
+                      setProductSuccess(null);
+                      if (productFileInputRef.current) productFileInputRef.current.value = '';
                       setProductForm({
-                        id: p.id,
-                        name: p.beverage_name || p.name,
-                        flavor: p.flavor_notes || p.flavor,
+                        id: String(p.id),
+                        originalName: currentName,
+                        name: currentName,
+                        flavor: p.flavor_notes || p.flavor || '',
                         price: p.price,
-                        image_url: p.image_url,
-                        description: p.description,
-                        volume: p.volume,
-                        calories: p.calories,
+                        image_url: p.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg',
+                        description: p.description || '',
+                        volume: p.volume || '330ml',
+                        calories: p.calories ?? 40,
                         category: p.category || 'Botanical Sparkler',
                         total_quantity: p.total_quantity ?? 50,
                         remaining_quantity: p.remaining_quantity ?? 50,
-                        active: p.active,
+                        active: p.active ?? 1,
                       });
-                      setImagePreview(p.image_url);
+                      setImagePreview(p.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg');
+                      setTimeout(() => {
+                        productFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }, 50);
                     }}
-                    className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                    className="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-100 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60 transition-colors cursor-pointer"
                   >
                     Edit Formulation &amp; Stock
                   </button>

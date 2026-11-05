@@ -65,11 +65,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   .maybeSingle();
 
                 if (data) {
-                  const freshContact = data['contact_no.'] || data.contact_no || parsed.contact_no;
-                  const freshAddress = data.delivery_address || parsed.delivery_address;
+                  const rawContact = data['contact_no.'] ?? data.contact_no ?? parsed.contact_no;
+                  const freshContact = rawContact != null ? String(rawContact) : '';
+                  const freshAddress = data.delivery_address ?? parsed.delivery_address ?? '';
+                  const freshName = data.name || parsed.name;
                   const refreshed: User = {
                     ...parsed,
                     id: data.id ? String(data.id) : parsed.id,
+                    name: freshName,
                     contact_no: freshContact,
                     delivery_address: freshAddress,
                     user_profile: data.user_profile || parsed.user_profile,
@@ -80,7 +83,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   try {
                     localStorage.setItem('aurra_auth_user', JSON.stringify(refreshed));
                     if (freshContact) localStorage.setItem('aurra_user_contact', freshContact);
+                    else localStorage.removeItem('aurra_user_contact');
                     if (freshAddress) localStorage.setItem('aurra_user_address', freshAddress);
+                    else localStorage.removeItem('aurra_user_address');
                   } catch {}
                 }
               } catch {

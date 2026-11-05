@@ -202,11 +202,11 @@ export function initDatabase() {
       db.prepare("ALTER TABLE products ADD COLUMN updated_at TEXT").run();
     }
 
-    // Initialize stock for any products with null/zero values
+    // Initialize stock for any products with null values
     db.prepare(`
       UPDATE products
       SET total_quantity = 50
-      WHERE total_quantity IS NULL OR total_quantity = 0
+      WHERE total_quantity IS NULL
     `).run();
     db.prepare(`
       UPDATE products
@@ -223,59 +223,10 @@ export function initDatabase() {
     console.warn('Product table inventory migration warning:', err);
   }
 
-  // Seed default beverage products if none exist
+  // Seed default beverage products only if database is empty
   const existingCount = db.prepare('SELECT count(*) as count FROM products').get() as { count: number };
   if (existingCount.count === 0) {
     seedDefaultProducts();
-  } else {
-    // Ensure all 8 menu drinks have the exact requested Aurra names and are active
-    const syncDrinks = [
-      { id: 'prod-cranberry-sparkle', name: 'Aurra Sparkle Cranberry', flavor: 'Tart Cranberry & Wild Botanicals', price: 149, volume: '330ml', calories: 42, image_url: '/assets/images/bev_cranberry_sparkle_1793439801856.jpg' },
-      { id: 'prod-mint-mojito', name: 'Aurra Mint Mojito', flavor: 'Fresh Garden Spearmint & Persian Lime', price: 159, volume: '330ml', calories: 38, image_url: '/assets/images/bev_mint_mojito_1793439802738.jpg' },
-      { id: 'prod-zesty-lime', name: 'Aurra Zesty Lime', flavor: 'Crisp Citrus & Himalayan Sea Salt', price: 139, volume: '330ml', calories: 32, image_url: '/assets/images/bev_zesty_lime_1793439823884.jpg' },
-      { id: 'prod-mango-rush', name: 'Aurra Mango Rush', flavor: 'Ratnagiri Alphonso & Sunlit Citrus', price: 169, volume: '330ml', calories: 54, image_url: '/assets/images/bev_mango_rush_1793439803204.jpg' },
-      { id: 'prod-orange-fizz', name: 'Aurra Fizz Orange', flavor: 'Nagpur Mandarin & Valencia Orange', price: 149, volume: '330ml', calories: 48, image_url: '/assets/images/bev_orange_fizz_1793439826689.jpg' },
-      { id: 'prod-peach-iced-tea', name: 'Aurra Peach Iced Tea', flavor: 'Darjeeling Black Tea & Ripe Golden Peach', price: 159, volume: '355ml', calories: 40, image_url: '/assets/images/bev_peach_iced_tea_1793439826681.jpg' },
-      { id: 'prod-passionfruit-fizz', name: 'Aurra Passionfruit', flavor: 'Tropical Passionfruit & Wild Citrus', price: 169, volume: '330ml', calories: 44, image_url: '/assets/images/bev_passionfruit_fizz_1793441269499.jpg' },
-      {
-        id: 'prod-berry-blast',
-        name: 'Aurra Berry Blast',
-        flavor: 'Wild Blackberry, Blueberry & Acai',
-        price: 179,
-        image_url: '/assets/aistudio/aurra_berry_blast.jpg',
-        description: 'A rich anthocyanin-packed blend of deep wild forest berries, dark grape skin, and fizzy spring water.',
-        volume: '330ml',
-        calories: 46,
-      },
-    ];
-
-    const now = new Date().toISOString();
-    for (const item of syncDrinks) {
-      const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(item.id);
-      if (existing) {
-        if (item.image_url) {
-          db.prepare('UPDATE products SET name = ?, flavor = ?, price = ?, image_url = ?, description = COALESCE(description, ?), volume = ?, calories = ?, active = 1 WHERE id = ?')
-            .run(item.name, item.flavor, item.price, item.image_url, item.description || '', item.volume, item.calories, item.id);
-        } else {
-          db.prepare('UPDATE products SET name = ?, active = 1 WHERE id = ?').run(item.name, item.id);
-        }
-      } else {
-        db.prepare(`
-          INSERT INTO products (id, name, flavor, price, image_url, description, volume, calories, active, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        `).run(
-          item.id,
-          item.name,
-          item.flavor,
-          item.price,
-          item.image_url || '/assets/aistudio/aurra_berry_blast.jpg',
-          item.description || '',
-          item.volume,
-          item.calories,
-          now
-        );
-      }
-    }
   }
   } catch (err) {
     console.warn('Database initialization notice (handled gracefully):', err);

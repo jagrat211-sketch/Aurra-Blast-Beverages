@@ -179,13 +179,60 @@ export const api = {
         try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
       }
       if (res?.user) {
-        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+        try {
+          localStorage.setItem('aurra_auth_user', JSON.stringify(res.user));
+          if (res.user.contact_no) {
+            localStorage.setItem('aurra_user_contact', String(res.user.contact_no));
+          } else {
+            localStorage.removeItem('aurra_user_contact');
+          }
+          if (res.user.delivery_address) {
+            localStorage.setItem('aurra_user_address', res.user.delivery_address);
+          } else {
+            localStorage.removeItem('aurra_user_address');
+          }
+        } catch {}
       }
       return res;
     } catch (err: any) {
       if (err.status === 401) {
         return { user: null };
       }
+      // Fallback: refresh from Supabase directly if /api/auth/me is unavailable
+      try {
+        const cached = typeof window !== 'undefined' ? localStorage.getItem('aurra_auth_user') : null;
+        const parsed = cached ? JSON.parse(cached) : null;
+        if (parsed?.email) {
+          const { supabase } = await import('./supabase.js');
+          const { data: sbUser } = await supabase
+            .from('users')
+            .select('*')
+            .ilike('email', parsed.email.trim())
+            .maybeSingle();
+          if (sbUser) {
+            const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no ?? parsed.contact_no;
+            const contactStr = rawContact != null ? String(rawContact) : '';
+            const addrStr = sbUser.delivery_address ?? parsed.delivery_address ?? '';
+            const refreshed: User = {
+              ...parsed,
+              id: sbUser.id ? String(sbUser.id) : parsed.id,
+              name: sbUser.name || parsed.name,
+              role: sbUser.role || parsed.role,
+              delivery_address: addrStr,
+              contact_no: contactStr,
+              user_profile: sbUser.user_profile || sbUser.avatar_url || parsed.user_profile,
+              avatar_url: sbUser.user_profile || sbUser.avatar_url || parsed.avatar_url,
+              updated_at: sbUser.updated_at || parsed.updated_at,
+            };
+            localStorage.setItem('aurra_auth_user', JSON.stringify(refreshed));
+            if (contactStr) localStorage.setItem('aurra_user_contact', contactStr);
+            else localStorage.removeItem('aurra_user_contact');
+            if (addrStr) localStorage.setItem('aurra_user_address', addrStr);
+            else localStorage.removeItem('aurra_user_address');
+            return { user: refreshed };
+          }
+        }
+      } catch {}
       throw err;
     }
   },
@@ -273,7 +320,19 @@ export const api = {
         try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
       }
       if (res?.user) {
-        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+        try {
+          localStorage.setItem('aurra_auth_user', JSON.stringify(res.user));
+          if (res.user.contact_no) {
+            localStorage.setItem('aurra_user_contact', String(res.user.contact_no));
+          } else {
+            localStorage.removeItem('aurra_user_contact');
+          }
+          if (res.user.delivery_address) {
+            localStorage.setItem('aurra_user_address', res.user.delivery_address);
+          } else {
+            localStorage.removeItem('aurra_user_address');
+          }
+        } catch {}
       }
       return res;
     } catch (apiErr: any) {
@@ -281,12 +340,14 @@ export const api = {
       try {
         const { supabase } = await import('./supabase.js');
         const cleanEmail = payload.email.toLowerCase().trim();
-        const { data: sbUser } = await supabase.from('users').select('*').eq('email', cleanEmail).maybeSingle();
+        const { data: sbUser } = await supabase.from('users').select('*').ilike('email', cleanEmail).maybeSingle();
         if (sbUser) {
           const storedPassword = sbUser.password || sbUser.password_hash;
           if (storedPassword === payload.password) {
             const role = (sbUser.role === 'admin' || cleanEmail === 'adminaurra@beverages.com') ? 'admin' : 'user';
-            const savedContact = sbUser['contact_no.'] || sbUser.contact_no || sbUser.contact_number || '';
+            const rawContact = sbUser['contact_no.'] ?? sbUser.contact_no ?? sbUser.contact_number;
+            const savedContact = rawContact != null ? String(rawContact) : '';
+            const savedAddress = sbUser.delivery_address || '';
             const authUser: User = {
               id: String(sbUser.id),
               name: sbUser.name || 'Aurra Customer',
@@ -297,14 +358,16 @@ export const api = {
               updated_at: sbUser.updated_at,
               avatar_url: sbUser.user_profile || sbUser.avatar_url,
               user_profile: sbUser.user_profile || sbUser.avatar_url,
-              delivery_address: sbUser.delivery_address,
+              delivery_address: savedAddress,
               contact_no: savedContact,
               parent_id: 'AURRA-DIST-IND-01',
             };
             try {
               localStorage.setItem('aurra_auth_user', JSON.stringify(authUser));
               if (savedContact) localStorage.setItem('aurra_user_contact', savedContact);
-              if (sbUser.delivery_address) localStorage.setItem('aurra_user_address', sbUser.delivery_address);
+              else localStorage.removeItem('aurra_user_contact');
+              if (savedAddress) localStorage.setItem('aurra_user_address', savedAddress);
+              else localStorage.removeItem('aurra_user_address');
             } catch {}
             return { success: true, user: authUser };
           }
@@ -320,6 +383,8 @@ export const api = {
     try {
       localStorage.removeItem('aurra_auth_user');
       localStorage.removeItem('aurra_auth_token');
+      localStorage.removeItem('aurra_user_contact');
+      localStorage.removeItem('aurra_user_address');
     } catch {}
     return request<{ success: boolean; message: string }>('/api/auth/logout', {
       method: 'POST',
@@ -340,33 +405,57 @@ export const api = {
         try { localStorage.setItem('aurra_auth_token', res.token); } catch {}
       }
       if (res?.user) {
-        try { localStorage.setItem('aurra_auth_user', JSON.stringify(res.user)); } catch {}
+        try {
+          localStorage.setItem('aurra_auth_user', JSON.stringify(res.user));
+          if (res.user.contact_no) {
+            localStorage.setItem('aurra_user_contact', String(res.user.contact_no));
+          } else {
+            localStorage.removeItem('aurra_user_contact');
+          }
+          if (res.user.delivery_address) {
+            localStorage.setItem('aurra_user_address', res.user.delivery_address);
+          } else {
+            localStorage.removeItem('aurra_user_address');
+          }
+        } catch {}
       }
       return res;
     } catch (apiErr: any) {
       const cleanUser = (payload.username || '').toLowerCase().trim();
       const cleanPass = (payload.password || '').trim().toLowerCase();
       if ((cleanUser === 'adminaurra@beverages.com' || cleanUser === 'admin' || cleanUser === 'admin@g.com') && cleanPass === 'admin') {
-        let profileUrl: string | undefined = undefined;
+        let sbAdmin: any = null;
         try {
           const { supabase } = await import('./supabase.js');
-          const { data: sbAdmin } = await supabase.from('users').select('user_profile, avatar_url').eq('email', 'adminaurra@beverages.com').maybeSingle();
-          profileUrl = sbAdmin?.user_profile || sbAdmin?.avatar_url || undefined;
+          const { data } = await supabase.from('users').select('*').ilike('email', 'adminaurra@beverages.com').maybeSingle();
+          sbAdmin = data;
         } catch {}
 
+        const profileUrl = sbAdmin?.user_profile || sbAdmin?.avatar_url || undefined;
+        const rawAdminContact = sbAdmin?.['contact_no.'] ?? sbAdmin?.contact_no;
+        const savedContact = rawAdminContact != null ? String(rawAdminContact) : '';
+        const savedAddress = sbAdmin?.delivery_address || '';
+
         const adminUser: User = {
-          id: 'admin_sys_01',
-          name: 'Aurra Administrator',
+          id: sbAdmin?.id ? String(sbAdmin.id) : 'admin_sys_01',
+          name: sbAdmin?.name || 'Aurra Administrator',
           email: 'adminaurra@beverages.com',
           role: 'admin',
           email_verified: 1,
-          created_at: new Date().toISOString(),
+          created_at: sbAdmin?.created_at || new Date().toISOString(),
+          updated_at: sbAdmin?.updated_at,
+          delivery_address: savedAddress,
+          contact_no: savedContact,
           avatar_url: profileUrl,
           user_profile: profileUrl,
           parent_id: 'AURRA-HQ-01',
         };
         try {
           localStorage.setItem('aurra_auth_user', JSON.stringify(adminUser));
+          if (savedContact) localStorage.setItem('aurra_user_contact', savedContact);
+          else localStorage.removeItem('aurra_user_contact');
+          if (savedAddress) localStorage.setItem('aurra_user_address', savedAddress);
+          else localStorage.removeItem('aurra_user_address');
         } catch {}
         return { success: true, user: adminUser };
       }
@@ -587,12 +676,13 @@ export const api = {
                 : 50,
             active: sbP.active !== undefined ? (sbP.active ? 1 : 0) : 1,
             created_at: sbP.created_at || new Date().toISOString(),
+            updated_at: sbP.updated_at || undefined,
           };
 
           const matchIndex = baseList.findIndex(
             (p) =>
-              p.name?.toLowerCase().trim() === mapped.name?.toLowerCase().trim() ||
               p.id === mapped.id ||
+              p.name?.toLowerCase().trim() === mapped.name?.toLowerCase().trim() ||
               (p as any).beverage_name?.toLowerCase().trim() === mapped.name?.toLowerCase().trim()
           );
 
@@ -642,39 +732,63 @@ export const api = {
     return { products: finalList };
   },
 
-  async saveProduct(payload: Partial<Product>) {
+  async saveProduct(payload: Partial<Product> & { originalName?: string }) {
     let result: { success: boolean; product: Product } | null = null;
     try {
-      result = await request<{ success: boolean; product: Product }>('/api/products', {
-        method: 'POST',
+      const endpoint = payload.id
+        ? `/api/products/${encodeURIComponent(String(payload.id))}`
+        : '/api/products';
+      result = await request<{ success: boolean; product: Product }>(endpoint, {
+        method: payload.id ? 'PUT' : 'POST',
         body: JSON.stringify(payload),
       });
     } catch (apiErr: any) {
+      if (apiErr instanceof ApiError && (apiErr.status === 400 || apiErr.status === 401 || apiErr.status === 403)) {
+        throw apiErr;
+      }
       console.warn('API saveProduct notice (using direct Supabase persistence):', apiErr);
     }
 
-    // Direct Supabase synchronization: guarantee write to Supabase products table!
+    if (result?.success && result.product) {
+      return result;
+    }
+
+    // Direct Supabase synchronization fallback when API route is unavailable
     let savedSbProduct: Product | null = null;
     try {
       const { supabase } = await import('./supabase.js');
       const bevName = (payload.beverage_name || payload.name || '').trim();
+      const prevName = (payload.originalName || '').trim();
       const flavNotes = (payload.flavor_notes || payload.flavor || '').trim();
       const cat = (payload.category || 'Botanical Sparkler').trim();
+      const totalQty = typeof payload.total_quantity === 'number' && !isNaN(payload.total_quantity) ? payload.total_quantity : 50;
+      const remainQty =
+        typeof payload.remaining_quantity === 'number' && !isNaN(payload.remaining_quantity)
+          ? payload.remaining_quantity
+          : totalQty;
+      const kcal = typeof payload.calories === 'number' && !isNaN(payload.calories) ? payload.calories : 40;
       const cleanImg = payload.image_url?.startsWith('/src/assets/images/')
         ? payload.image_url.replace('/src/assets/images/', '/assets/images/')
         : (payload.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg');
+      const nowIso = new Date().toISOString();
 
-      // Check if product exists in Supabase by beverage_name or id
-      let query = supabase.from('products').select('*');
+      // Match existing product by numeric id first, then originalName, then beverage_name
+      let existingSbProd: any = null;
       if (payload.id && !isNaN(Number(payload.id))) {
-        query = query.eq('id', Number(payload.id));
-      } else {
-        query = query.ilike('beverage_name', bevName);
+        const { data } = await supabase.from('products').select('*').eq('id', Number(payload.id)).maybeSingle();
+        existingSbProd = data;
       }
-      const { data: existingSbProd } = await query.maybeSingle();
+      if (!existingSbProd && prevName) {
+        const { data } = await supabase.from('products').select('*').ilike('beverage_name', prevName).maybeSingle();
+        existingSbProd = data;
+      }
+      if (!existingSbProd) {
+        const { data } = await supabase.from('products').select('*').ilike('beverage_name', bevName).maybeSingle();
+        existingSbProd = data;
+      }
 
       if (existingSbProd?.id) {
-        const { data: updated } = await supabase
+        const { data: updated, error: updateErr } = await supabase
           .from('products')
           .update({
             beverage_name: bevName,
@@ -682,39 +796,43 @@ export const api = {
             description: payload.description || '',
             price: Number(payload.price) || 149,
             category: cat,
-            total_quantity: Number(payload.total_quantity) || 50,
-            remaining_quantity:
-              payload.remaining_quantity !== undefined
-                ? Number(payload.remaining_quantity)
-                : Number(payload.total_quantity) || 50,
+            total_quantity: totalQty,
+            remaining_quantity: remainQty,
             volume: payload.volume || '330ml',
-            calories: Number(payload.calories) || 40,
+            calories: kcal,
             image_url: cleanImg,
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso,
           })
           .eq('id', existingSbProd.id)
-          .select()
+          .select('*')
           .maybeSingle();
+
+        if (updateErr) {
+          throw new Error(updateErr.message || 'Failed to update product in Supabase');
+        }
 
         if (updated) {
           savedSbProduct = {
             id: String(updated.id),
             name: updated.beverage_name,
+            beverage_name: updated.beverage_name,
             flavor: updated.flavor_notes || 'Botanical Sparkler',
+            flavor_notes: updated.flavor_notes || 'Botanical Sparkler',
             price: Number(updated.price) || 149,
             image_url: updated.image_url,
             description: updated.description || '',
             volume: updated.volume || '330ml',
-            calories: updated.calories || 40,
+            calories: typeof updated.calories === 'number' ? updated.calories : 40,
             category: updated.category || 'Botanical Sparkler',
-            total_quantity: updated.total_quantity || 50,
-            remaining_quantity: updated.remaining_quantity !== undefined ? updated.remaining_quantity : 50,
+            total_quantity: typeof updated.total_quantity === 'number' ? updated.total_quantity : 50,
+            remaining_quantity: typeof updated.remaining_quantity === 'number' ? updated.remaining_quantity : 50,
             active: 1,
-            created_at: updated.created_at || new Date().toISOString(),
+            created_at: updated.created_at || nowIso,
+            updated_at: updated.updated_at || nowIso,
           };
         }
       } else {
-        const { data: inserted } = await supabase
+        const { data: inserted, error: insertErr } = await supabase
           .from('products')
           .insert({
             beverage_name: bevName,
@@ -722,63 +840,51 @@ export const api = {
             description: payload.description || '',
             price: Number(payload.price) || 149,
             category: cat,
-            total_quantity: Number(payload.total_quantity) || 50,
-            remaining_quantity:
-              payload.remaining_quantity !== undefined
-                ? Number(payload.remaining_quantity)
-                : Number(payload.total_quantity) || 50,
+            total_quantity: totalQty,
+            remaining_quantity: remainQty,
             volume: payload.volume || '330ml',
-            calories: Number(payload.calories) || 40,
+            calories: kcal,
             image_url: cleanImg,
-            created_at: new Date().toISOString(),
+            created_at: nowIso,
+            updated_at: nowIso,
           })
-          .select()
+          .select('*')
           .maybeSingle();
+
+        if (insertErr) {
+          throw new Error(insertErr.message || 'Failed to insert product in Supabase');
+        }
 
         if (inserted) {
           savedSbProduct = {
             id: String(inserted.id),
             name: inserted.beverage_name,
+            beverage_name: inserted.beverage_name,
             flavor: inserted.flavor_notes || 'Botanical Sparkler',
+            flavor_notes: inserted.flavor_notes || 'Botanical Sparkler',
             price: Number(inserted.price) || 149,
             image_url: inserted.image_url,
             description: inserted.description || '',
             volume: inserted.volume || '330ml',
-            calories: inserted.calories || 40,
+            calories: typeof inserted.calories === 'number' ? inserted.calories : 40,
             category: inserted.category || 'Botanical Sparkler',
-            total_quantity: inserted.total_quantity || 50,
-            remaining_quantity: inserted.remaining_quantity !== undefined ? inserted.remaining_quantity : 50,
+            total_quantity: typeof inserted.total_quantity === 'number' ? inserted.total_quantity : 50,
+            remaining_quantity: typeof inserted.remaining_quantity === 'number' ? inserted.remaining_quantity : 50,
             active: 1,
-            created_at: inserted.created_at || new Date().toISOString(),
+            created_at: inserted.created_at || nowIso,
+            updated_at: inserted.updated_at || nowIso,
           };
         }
       }
-    } catch (sbErr) {
-      console.warn('Direct Supabase product persistence notice:', sbErr);
+    } catch (sbErr: any) {
+      throw new Error(sbErr?.message || 'Failed to save product to database');
     }
 
     if (savedSbProduct) {
       return { success: true, product: savedSbProduct };
     }
 
-    if (result) return result;
-
-    const fallbackProduct: Product = {
-      id: payload.id || `prod_${Date.now()}`,
-      name: payload.name || payload.beverage_name || 'New Beverage',
-      flavor: payload.flavor || payload.flavor_notes || 'Botanical Sparkler',
-      price: Number(payload.price) || 149,
-      image_url: payload.image_url || '/assets/images/hero_beverage_can_1793439801479.jpg',
-      description: payload.description || '',
-      volume: payload.volume || '330ml',
-      calories: Number(payload.calories) || 40,
-      active: 1,
-      total_quantity: Number(payload.total_quantity) || 50,
-      remaining_quantity: Number(payload.remaining_quantity) || 50,
-      category: payload.category || 'Botanical Sparkler',
-      created_at: new Date().toISOString(),
-    };
-    return { success: true, product: fallbackProduct };
+    throw new Error('Failed to save product changes');
   },
 
   async uploadBeverageImage(payload: {
@@ -904,37 +1010,29 @@ export const api = {
     const cleanAddress = (payload.delivery_address || payload.address || '').trim();
     const cleanContact = (payload.contact_no || payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
 
-    // 1. Direct Supabase write
-    try {
-      const { supabase } = await import('./supabase.js');
-      const cached = localStorage.getItem('aurra_auth_user');
-      const userObj = cached ? JSON.parse(cached) : null;
-      const targetEmail = (cleanEmail || userObj?.email || '').toLowerCase().trim();
+    const cachedBefore = localStorage.getItem('aurra_auth_user');
+    let userObj: any = cachedBefore ? JSON.parse(cachedBefore) : null;
+    const targetEmail = (cleanEmail || userObj?.email || '').toLowerCase().trim();
 
+    // 1. Direct Supabase write (using exact column names: name, delivery_address, 'contact_no.', updated_at)
+    let sbUpdated: any = null;
+    try {
       if (targetEmail) {
+        const { supabase } = await import('./supabase.js');
         const updateObj: Record<string, any> = {
           updated_at: new Date().toISOString(),
         };
         if (cleanName) updateObj.name = cleanName;
         if (cleanAddress) updateObj.delivery_address = cleanAddress;
-        if (cleanContact) {
-          updateObj['contact_no.'] = cleanContact;
-          updateObj.contact_no = cleanContact;
-        }
+        if (cleanContact) updateObj['contact_no.'] = cleanContact;
 
-        await supabase
+        const { data } = await supabase
           .from('users')
           .update(updateObj)
-          .ilike('email', targetEmail);
-
-        if (userObj) {
-          if (cleanName) userObj.name = cleanName;
-          if (cleanAddress) userObj.delivery_address = cleanAddress;
-          if (cleanContact) userObj.contact_no = cleanContact;
-          localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
-          if (cleanContact) localStorage.setItem('aurra_user_contact', cleanContact);
-          if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
-        }
+          .ilike('email', targetEmail)
+          .select('*')
+          .maybeSingle();
+        sbUpdated = data;
       }
     } catch (sbErr) {
       console.warn('Supabase direct profile update note:', sbErr);
@@ -948,25 +1046,45 @@ export const api = {
         body: JSON.stringify({
           name: cleanName,
           email: cleanEmail,
-          delivery_address: cleanAddress,
-          contact_no: cleanContact,
+          delivery_address: cleanAddress || undefined,
+          contact_no: cleanContact || undefined,
         }),
       });
-      if (result?.user) {
-        localStorage.setItem('aurra_auth_user', JSON.stringify(result.user));
-      }
     } catch (apiErr) {
       console.warn('Backend update profile notice:', apiErr);
     }
 
-    if (result) return result;
-    const cached = localStorage.getItem('aurra_auth_user');
-    const userObj = cached ? JSON.parse(cached) : null;
-    return { success: true, user: userObj };
+    const sbContact = sbUpdated?.['contact_no.'] != null ? String(sbUpdated['contact_no.']) : undefined;
+    const mergedUser: User = {
+      ...(userObj || {}),
+      ...(sbUpdated ? {
+        id: sbUpdated.id ? String(sbUpdated.id) : userObj?.id,
+        name: sbUpdated.name || userObj?.name,
+        delivery_address: sbUpdated.delivery_address ?? userObj?.delivery_address,
+        contact_no: sbContact ?? userObj?.contact_no,
+        user_profile: sbUpdated.user_profile || sbUpdated.avatar_url || userObj?.user_profile,
+        avatar_url: sbUpdated.avatar_url || sbUpdated.user_profile || userObj?.avatar_url,
+      } : {}),
+      ...(result?.user || {}),
+      ...(cleanName ? { name: cleanName } : {}),
+      ...(cleanAddress ? { delivery_address: cleanAddress } : {}),
+      ...(cleanContact ? { contact_no: cleanContact } : {}),
+    };
+
+    try {
+      localStorage.setItem('aurra_auth_user', JSON.stringify(mergedUser));
+      if (mergedUser.contact_no) localStorage.setItem('aurra_user_contact', String(mergedUser.contact_no));
+      if (mergedUser.delivery_address) localStorage.setItem('aurra_user_address', mergedUser.delivery_address);
+    } catch {}
+
+    return { success: true, user: mergedUser };
   },
 
   async updateAddress(payload: { address: string }) {
     const cleanAddress = payload.address.trim();
+    const cachedBefore = localStorage.getItem('aurra_auth_user');
+    const userObj: any = cachedBefore ? JSON.parse(cachedBefore) : null;
+
     let result: { success: boolean; message: string; user: User } | null = null;
     try {
       result = await request<{ success: boolean; message: string; user: User }>('/api/auth/address', {
@@ -977,85 +1095,123 @@ export const api = {
       console.warn('API updateAddress note (using direct Supabase):', err);
     }
 
+    let sbUpdated: any = null;
     try {
-      const { supabase } = await import('./supabase.js');
-      const cached = localStorage.getItem('aurra_auth_user');
-      const userObj = cached ? JSON.parse(cached) : null;
       if (userObj?.email) {
-        await supabase
+        const { supabase } = await import('./supabase.js');
+        const { data } = await supabase
           .from('users')
           .update({
             delivery_address: cleanAddress,
             updated_at: new Date().toISOString(),
           })
-          .ilike('email', userObj.email.trim());
-
-        userObj.delivery_address = cleanAddress;
-        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
-        if (!result) {
-          result = { success: true, message: 'Address saved!', user: userObj };
-        }
+          .ilike('email', userObj.email.trim())
+          .select('*')
+          .maybeSingle();
+        sbUpdated = data;
       }
     } catch (sbErr) {
       console.warn('Direct Supabase address update note:', sbErr);
     }
 
-    if (result) return result;
-    return { success: true, message: 'Address saved!', user: { delivery_address: cleanAddress } as any };
+    const sbContact = sbUpdated?.['contact_no.'] != null ? String(sbUpdated['contact_no.']) : undefined;
+    const mergedUser: User = {
+      ...(userObj || {}),
+      ...(sbUpdated ? {
+        id: sbUpdated.id ? String(sbUpdated.id) : userObj?.id,
+        name: sbUpdated.name || userObj?.name,
+        contact_no: sbContact ?? userObj?.contact_no,
+        user_profile: sbUpdated.user_profile || sbUpdated.avatar_url || userObj?.user_profile,
+        avatar_url: sbUpdated.avatar_url || sbUpdated.user_profile || userObj?.avatar_url,
+      } : {}),
+      ...(result?.user || {}),
+      name: result?.user?.name || sbUpdated?.name || userObj?.name || '',
+      delivery_address: cleanAddress,
+      contact_no: result?.user?.contact_no || sbContact || userObj?.contact_no || '',
+    };
+
+    try {
+      localStorage.setItem('aurra_auth_user', JSON.stringify(mergedUser));
+      localStorage.setItem('aurra_user_address', cleanAddress);
+      if (mergedUser.contact_no) localStorage.setItem('aurra_user_contact', String(mergedUser.contact_no));
+    } catch {}
+
+    return {
+      success: true,
+      message: result?.message || 'Address saved!',
+      user: mergedUser,
+    };
   },
 
   async updateDeliveryInfo(payload: { address: string; contactNo: string }) {
     const cleanAddress = payload.address.trim();
     const cleanDigits = (payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
+    const cachedBefore = localStorage.getItem('aurra_auth_user');
+    const userObj: any = cachedBefore ? JSON.parse(cachedBefore) : null;
 
-    // 1. Direct Supabase update
+    // 1. Direct Supabase update (using exact column names: delivery_address, 'contact_no.')
+    let sbUpdated: any = null;
     try {
-      const { supabase } = await import('./supabase.js');
-      const cached = localStorage.getItem('aurra_auth_user');
-      const userObj = cached ? JSON.parse(cached) : null;
       if (userObj?.email) {
-        await supabase
+        const { supabase } = await import('./supabase.js');
+        const { data } = await supabase
           .from('users')
           .update({
             delivery_address: cleanAddress,
             'contact_no.': cleanDigits,
             updated_at: new Date().toISOString(),
           })
-          .ilike('email', userObj.email.trim());
-
-        try {
-          await supabase
-            .from('users')
-            .update({
-              contact_no: cleanDigits,
-            })
-            .ilike('email', userObj.email.trim());
-        } catch {}
-
-        userObj.delivery_address = cleanAddress;
-        userObj.contact_no = cleanDigits;
-        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
-        if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
-        if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
+          .ilike('email', userObj.email.trim())
+          .select('*')
+          .maybeSingle();
+        sbUpdated = data;
       }
     } catch (sbErr) {
       console.warn('Direct Supabase delivery info note:', sbErr);
     }
 
-    if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
-    if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
+    // 2. Call backend endpoint
+    let result: { success: boolean; user: User } | null = null;
+    try {
+      result = await request<{ success: boolean; user: User }>('/api/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          delivery_address: cleanAddress,
+          contact_no: cleanDigits,
+        }),
+      });
+    } catch (apiErr) {
+      console.warn('Backend delivery info update note:', apiErr);
+    }
 
-    // 2. Call backend endpoints
-    await this.updateAddress({ address: cleanAddress }).catch(() => null);
-    await this.updateContactNo({ contactNo: cleanDigits }).catch(() => null);
+    const mergedUser: User = {
+      ...(userObj || {}),
+      ...(sbUpdated ? {
+        id: sbUpdated.id ? String(sbUpdated.id) : userObj?.id,
+        name: sbUpdated.name || userObj?.name,
+        user_profile: sbUpdated.user_profile || sbUpdated.avatar_url || userObj?.user_profile,
+        avatar_url: sbUpdated.avatar_url || sbUpdated.user_profile || userObj?.avatar_url,
+      } : {}),
+      ...(result?.user || {}),
+      name: result?.user?.name || sbUpdated?.name || userObj?.name || '',
+      delivery_address: cleanAddress,
+      contact_no: cleanDigits,
+    };
 
-    const cached = localStorage.getItem('aurra_auth_user');
-    const userObj = cached ? JSON.parse(cached) : null;
-    return { success: true, user: userObj };
+    try {
+      localStorage.setItem('aurra_auth_user', JSON.stringify(mergedUser));
+      if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
+      if (cleanAddress) localStorage.setItem('aurra_user_address', cleanAddress);
+    } catch {}
+
+    return { success: true, user: mergedUser };
   },
 
   async updateContactNo(payload: { contactNo: string }) {
     const cleanDigits = (payload.contactNo || '').replace(/\D/g, '').slice(0, 10);
+    const cachedBefore = localStorage.getItem('aurra_auth_user');
+    const userObj: any = cachedBefore ? JSON.parse(cachedBefore) : null;
+
     let result: { success: boolean; message: string; user: User } | null = null;
     try {
       result = await request<{ success: boolean; message: string; user: User }>('/api/auth/contact-no', {
@@ -1066,44 +1222,52 @@ export const api = {
       console.warn('API updateContactNo notice (using direct Supabase persistence):', err);
     }
 
-    // Direct Supabase persistence
+    // Direct Supabase persistence (writing to 'contact_no.' column with case-insensitive email match)
+    let sbUpdated: any = null;
     try {
-      const { supabase } = await import('./supabase.js');
-      const cached = localStorage.getItem('aurra_auth_user');
-      const userObj = cached ? JSON.parse(cached) : null;
       if (userObj?.email) {
-        await supabase
+        const { supabase } = await import('./supabase.js');
+        const { data } = await supabase
           .from('users')
           .update({
             'contact_no.': cleanDigits,
             updated_at: new Date().toISOString(),
           })
-          .eq('email', userObj.email);
-
-        try {
-          await supabase
-            .from('users')
-            .update({
-              contact_no: cleanDigits,
-            })
-            .eq('email', userObj.email);
-        } catch {}
-        
-        userObj.contact_no = cleanDigits;
-        localStorage.setItem('aurra_auth_user', JSON.stringify(userObj));
-        localStorage.setItem('aurra_user_contact', cleanDigits);
-        if (!result) {
-          result = { success: true, message: 'Contact number saved!', user: userObj };
-        }
+          .ilike('email', userObj.email.trim())
+          .select('*')
+          .maybeSingle();
+        sbUpdated = data;
       }
     } catch (sbErr) {
       console.warn('Direct Supabase contact_no update notice:', sbErr);
     }
 
-    if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
+    const mergedUser: User = {
+      ...(userObj || {}),
+      ...(sbUpdated ? {
+        id: sbUpdated.id ? String(sbUpdated.id) : userObj?.id,
+        name: sbUpdated.name || userObj?.name,
+        delivery_address: sbUpdated.delivery_address ?? userObj?.delivery_address,
+        user_profile: sbUpdated.user_profile || sbUpdated.avatar_url || userObj?.user_profile,
+        avatar_url: sbUpdated.avatar_url || sbUpdated.user_profile || userObj?.avatar_url,
+      } : {}),
+      ...(result?.user || {}),
+      name: result?.user?.name || sbUpdated?.name || userObj?.name || '',
+      delivery_address: result?.user?.delivery_address || sbUpdated?.delivery_address || userObj?.delivery_address || '',
+      contact_no: cleanDigits,
+    };
 
-    if (result) return result;
-    return { success: true, message: 'Contact number saved!', user: { contact_no: cleanDigits } as any };
+    try {
+      localStorage.setItem('aurra_auth_user', JSON.stringify(mergedUser));
+      if (cleanDigits) localStorage.setItem('aurra_user_contact', cleanDigits);
+      if (mergedUser.delivery_address) localStorage.setItem('aurra_user_address', mergedUser.delivery_address);
+    } catch {}
+
+    return {
+      success: true,
+      message: result?.message || 'Contact number saved!',
+      user: mergedUser,
+    };
   },
 
   // Orders
@@ -1117,6 +1281,26 @@ export const api = {
     });
   },
 
+  async createRazorpayOrder(payload: {
+    amount: number;
+    items: { productId: string; qty: number; price?: number; name?: string }[];
+    contactNo?: string;
+    address?: string;
+  }) {
+    return request<{
+      success: boolean;
+      key: string;
+      order_id: string;
+      id: string;
+      amount: number;
+      currency: string;
+      receipt: string;
+    }>('/api/razorpay/create-order', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
   async createRazorpayQr(payload: {
     amount?: number;
     items: { productId: string; qty: number; price?: number; name?: string }[];
@@ -1125,6 +1309,7 @@ export const api = {
   }) {
     return request<{
       success: boolean;
+      key?: string;
       razorpayOrderId: string;
       amount: number;
       currency: string;
@@ -1141,6 +1326,7 @@ export const api = {
   async confirmPayment(payload: {
     razorpayOrderId?: string;
     paymentId?: string;
+    razorpaySignature?: string;
     items: { productId: string; qty: number; price?: number; name?: string }[];
     amount: number;
     userId?: string;

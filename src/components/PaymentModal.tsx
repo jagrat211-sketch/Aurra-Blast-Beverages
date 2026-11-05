@@ -30,6 +30,34 @@ interface PaymentModalProps {
   onSuccess: (order: Order) => void;
 }
 
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
+
+const loadRazorpayCheckoutScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true));
+      existing.addEventListener('error', () => resolve(false));
+      setTimeout(() => resolve(Boolean(window.Razorpay)), 2500);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
+
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { user, updateDeliveryInfo } = useAuth();
   const { items, getGrandTotal, clearCart, closeCart } = useCartStore();
@@ -43,6 +71,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [qrTimeLeft, setQrTimeLeft] = useState(300); // 5 minutes validity
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [openingUpiModal, setOpeningUpiModal] = useState(false);
+  const [upiSuccessInfo, setUpiSuccessInfo] = useState<{ paymentId: string; orderId: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -64,6 +94,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
       setQrTimeLeft(300);
       setQrCodeDataUrl(null);
       setRazorpayOrderId(null);
+      setUpiSuccessInfo(null);
+      setOpeningUpiModal(false);
       setError(null);
       return;
     }
@@ -137,6 +169,166 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
     navigator.clipboard.writeText(businessUpi);
     setCopiedUpi(true);
     setTimeout(() => setCopiedUpi(false), 2000);
+  };
+
+  const handlePayViaUpi = async () => {
+    const outOfStockItem = items.find((i) => i.remaining_quantity !== undefined && i.remaining_quantity <= 0);
+    if (outOfStockItem) {
+      setError(`Cannot place order: "${outOfStockItem.name}" is currently out of stock. Please remove it from your cart.`);
+      return;
+    }
+
+    setOpeningUpiModal(true);
+    setError(null);
+
+    try {
+      const sdkLoaded = await loadRazorpayCheckoutScript();
+      if (!sdkLoaded || !window.Razorpay) {
+        throw new Error('Unable to load Razorpay Checkout SDK. Please check your internet connection.');
+      }
+
+      const payloadItems = items.map((i) => ({
+        productId: i.productId,
+        qty: i.qty,
+        price: i.price,
+        name: i.name,
+      }));
+
+      // 1. Create a genuine Razorpay Order in Test Mode on the backend
+      const orderRes = await api.createRazorpayOrder({
+        amount: grandTotal,
+        items: payloadItems,
+        contactNo: user?.contact_no,
+        address: user?.delivery_address,
+      });
+
+      if (!orderRes?.order_id) {
+        throw new Error('Failed to generate Razorpay order ID.');
+      }
+
+      setRazorpayOrderId(orderRes.order_id);
+
+      // 2. Open Razorpay Checkout Modal strictly in TEST MODE
+      const options = {
+        key: orderRes.key,
+        amount: orderRes.amount,
+        currency: orderRes.currency || 'INR',
+        name: 'Aurra Blast Beverages',
+        description: `UPI Order Payment (${items.length} ${items.length === 1 ? 'item' : 'items'})`,
+        order_id: orderRes.order_id,
+        prefill: {
+          name: user?.name || 'Aurra Customer',
+          email: user?.email || 'customer@aurrabeverages.com',
+          contact: user?.contact_no || '9999999999',
+          method: 'upi',
+        },
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay via UPI',
+                instruments: [{ method: 'upi' }],
+              },
+            },
+            sequence: ['block.upi'],
+            preferences: {
+              show_default_blocks: true,
+            },
+          },
+        },
+        theme: {
+          color: '#f59e0b',
+        },
+        // 3. Payment Success Handler (displays Payment ID & saves confirmed order)
+        handler: async (response: {
+          razorpay_payment_id: string;
+          razorpay_order_id: string;
+          razorpay_signature: string;
+        }) => {
+          setOpeningUpiModal(false);
+          setProcessingPayment(true);
+          setUpiSuccessInfo({
+            paymentId: response.razorpay_payment_id,
+            orderId: response.razorpay_order_id,
+          });
+
+          try {
+            const confirmRes = await api.confirmPayment({
+              razorpayOrderId: response.razorpay_order_id,
+              paymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+              items: payloadItems,
+              amount: grandTotal,
+              userId: user?.id,
+              userEmail: user?.email,
+              userName: user?.name,
+              contactNo: user?.contact_no,
+              deliveryAddress: user?.delivery_address,
+            });
+
+            try {
+              confetti({
+                particleCount: 90,
+                spread: 75,
+                origin: { y: 0.6 },
+              });
+            } catch {}
+
+            setTimeout(() => {
+              clearCart();
+              closeCart();
+              onClose();
+              if (confirmRes?.order) {
+                onSuccess({
+                  ...confirmRes.order,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpayPaymentId: response.razorpay_payment_id,
+                });
+              } else {
+                onSuccess({
+                  id: confirmRes?.orderId || `ord_${Date.now()}`,
+                  user_id: user?.id || 'guest',
+                  total: grandTotal,
+                  status: 'confirmed',
+                  created_at: new Date().toISOString(),
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpayPaymentId: response.razorpay_payment_id,
+                  items: items.map((i) => ({
+                    id: `oit_${Math.random()}`,
+                    product_id: i.productId,
+                    name_snapshot: i.name,
+                    price_snapshot: i.price,
+                    qty: i.qty,
+                  })),
+                });
+              }
+            }, 900);
+          } catch (confirmErr: any) {
+            setError(
+              confirmErr.message ||
+                `Payment captured (${response.razorpay_payment_id}), but order confirmation failed.`
+            );
+          } finally {
+            setProcessingPayment(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setOpeningUpiModal(false);
+          },
+        },
+      };
+
+      const razorpayInstance = new window.Razorpay(options);
+      razorpayInstance.on('payment.failed', (resp: any) => {
+        setOpeningUpiModal(false);
+        setError(resp?.error?.description || 'Razorpay UPI payment failed. Please try again.');
+      });
+      razorpayInstance.open();
+    } catch (err: any) {
+      setOpeningUpiModal(false);
+      setError(err.message || 'Unable to open Razorpay UPI Checkout.');
+    }
   };
 
   const handleConfirmAndComplete = async () => {
@@ -257,6 +449,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {/* Payment Captured Success Banner (with official Razorpay Payment ID) */}
+        {upiSuccessInfo && (
+          <div className="mt-3 flex items-start gap-2.5 rounded-2xl bg-emerald-50 p-3 text-xs text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800">
+            <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-bold">Payment Successful via Razorpay UPI!</div>
+              <div className="mt-0.5 font-mono text-[11px]">
+                Payment ID: <strong>{upiSuccessInfo.paymentId}</strong>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Error message */}
         {error && (
@@ -457,12 +662,32 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
           </span>
         </div>
 
+        {/* Pay via UPI Button (Opens Razorpay Standard Checkout Modal in Test Mode) */}
+        <button
+          type="button"
+          onClick={handlePayViaUpi}
+          disabled={openingUpiModal || processingPayment || loadingQr}
+          className="mt-3.5 w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 px-4 text-xs font-bold text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-700 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+        >
+          {openingUpiModal ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Opening Razorpay UPI Checkout...</span>
+            </>
+          ) : (
+            <>
+              <Smartphone className="h-4 w-4" />
+              <span>Pay via UPI</span>
+            </>
+          )}
+        </button>
+
         {/* Action button */}
-        <div className="mt-4 flex gap-2.5">
+        <div className="mt-2.5 flex gap-2.5">
           <button
             type="button"
             onClick={onClose}
-            disabled={processingPayment}
+            disabled={processingPayment || openingUpiModal}
             className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors cursor-pointer"
           >
             Cancel
@@ -470,7 +695,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onS
           <button
             type="button"
             onClick={handleConfirmAndComplete}
-            disabled={processingPayment || loadingQr}
+            disabled={processingPayment || openingUpiModal || loadingQr}
             className="flex-2 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 py-2.5 px-4 text-xs font-bold text-white shadow-md shadow-amber-500/25 hover:from-amber-600 hover:to-orange-600 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
           >
             {processingPayment ? (
